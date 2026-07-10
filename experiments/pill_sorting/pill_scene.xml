@@ -48,9 +48,6 @@
     <exclude body1="pill_pack" body2="left/left_finger_link"/>
     <exclude body1="pill_pack" body2="left/right_finger_link"/>
     <exclude body1="pill_pack" body2="left/gripper_base"/>
-    <exclude body1="stylus" body2="right/left_finger_link"/>
-    <exclude body1="stylus" body2="right/right_finger_link"/>
-    <exclude body1="stylus" body2="right/gripper_base"/>
   </contact>
 
   <custom>

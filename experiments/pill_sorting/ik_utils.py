@@ -18,9 +18,11 @@ class ArmKinematics:
         self.jnt_range = model.jnt_range[self.joint_ids].copy()
 
     def solve(self, data_ref, target_pos, target_zaxis=None, q_init=None,
-              iters=300, tol=1e-4, damping=0.05, step_scale=0.7, restarts=8, seed=0):
+              iters=300, tol=1e-4, damping=0.05, step_scale=0.7, restarts=8, seed=0,
+              local_axis=2):
         """迭代求解 IK（带随机重启）。返回 (q_solution, pos_err_m, axis_err_deg)。
 
+        target_zaxis: 站点局部轴（由 local_axis 指定 0/1/2 = x/y/z）要对齐的世界方向。
         在 data_ref 的副本上操作——其余关节（另一只手臂等）保持 data_ref 中的值。
         """
         rng = np.random.default_rng(seed)
@@ -31,7 +33,7 @@ class ArmKinematics:
             inits.append(lo + (hi - lo) * rng.random(len(self.qpos_ids)))
         for q0 in inits:
             sol = self._solve_once(data_ref, target_pos, target_zaxis, q0,
-                                   iters, tol, damping, step_scale)
+                                   iters, tol, damping, step_scale, local_axis)
             score = sol[1] + np.radians(sol[2]) * 0.1
             if best is None or score < best[0]:
                 best = (score, sol)
@@ -40,7 +42,7 @@ class ArmKinematics:
         return best[1]
 
     def _solve_once(self, data_ref, target_pos, target_zaxis, q_init,
-                    iters, tol, damping, step_scale):
+                    iters, tol, damping, step_scale, local_axis=2):
         data = mujoco.MjData(self.model)
         data.qpos[:] = data_ref.qpos
         if q_init is not None:
@@ -59,12 +61,12 @@ class ArmKinematics:
             jac_rows = [jacp[:, self.dof_ids]]
             if target_zaxis is not None:
                 tz = target_zaxis / np.linalg.norm(target_zaxis)
-                cur_z = rot[:, 2]
-                # 误差与雅可比保持一致：误差 = z 向量差，雅可比 = d(cur_z)/dq
-                rows.append((tz - cur_z) * 0.35)
+                cur_a = rot[:, local_axis]
+                # 误差与雅可比保持一致：误差 = 轴向量差，雅可比 = d(cur_a)/dq
+                rows.append((tz - cur_a) * 0.35)
                 jz = np.empty((3, len(self.dof_ids)))
                 for k, dof in enumerate(self.dof_ids):
-                    jz[:, k] = np.cross(jacr[:, dof], cur_z)
+                    jz[:, k] = np.cross(jacr[:, dof], cur_a)
                 jac_rows.append(jz * 0.35)
 
             err = np.concatenate(rows)
@@ -83,7 +85,7 @@ class ArmKinematics:
         axis_err = 0.0
         if target_zaxis is not None:
             tz = target_zaxis / np.linalg.norm(target_zaxis)
-            axis_err = float(np.degrees(np.arccos(np.clip(rot[:, 2] @ tz, -1, 1))))
+            axis_err = float(np.degrees(np.arccos(np.clip(rot[:, local_axis] @ tz, -1, 1))))
         return data.qpos[self.qpos_ids].copy(), pos_err, axis_err
 
     def q_now(self, data):

@@ -73,12 +73,12 @@ graph LR
 <div class="stat-grid" markdown>
 <div class="stat-card" markdown><span class="num">0</span><span class="label">当前阶段 / 共 7 阶段</span></div>
 <div class="stat-card" markdown><span class="num">1</span><span class="label">学习日志篇数</span></div>
-<div class="stat-card" markdown><span class="num">2</span><span class="label">完成的仿真实验</span></div>
-<div class="stat-card" markdown><span class="num">3/3</span><span class="label">分药 v0 入杯成功率</span></div>
+<div class="stat-card" markdown><span class="num">3</span><span class="label">完成的仿真实验</span></div>
+<div class="stat-card" markdown><span class="num">3/3</span><span class="label">分药 v1 徒手入杯成功率</span></div>
 </div>
 
 !!! success "最新进展 · 2026-07-10"
-    **分药任务首次仿真打通**：ALOHA 双臂平台上，左臂持药板、右臂按压破膜，三粒药片全部落入药杯。[看视频与力曲线 →](journal/2026-07-10.md#exp2-pill-demo)
+    **分药任务徒手版打通**：ALOHA 双臂平台上，左手持药板、右手指尖当"拇指"直压破膜（无工具），三粒药片全部落入药杯。[看视频与力曲线 →](journal/2026-07-10.md#exp3-pill-v1)
 
 !!! tip "如何使用这个网站"
     - **[学习路线图](roadmap.md)**：整个项目的地图，随时回来看看我们走到哪了。

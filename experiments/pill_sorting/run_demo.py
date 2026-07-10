@@ -1,10 +1,10 @@
-"""分药任务 v0：ALOHA 双臂脚本化演示。
+"""分药任务 v1：ALOHA 双臂徒手协同演示（无工具）。
 
 编排方式：离线 IK 解出各关键位姿的关节构型，再用关节空间最小加加速度插值执行。
 
 流程：
   1. 左臂夹持药板（3 格泡罩，底面朝下为铝膜），移动到药杯正上方；
-  2. 右臂持按压杆逐格下压；
+  2. 右臂夹爪完全闭合，指尖朝下，像人的拇指一样逐格下压；
   3. 铝膜以"药片-铝膜法向接触力阈值"模拟破裂——超阈值后该格铝膜失效，药片坠入药杯；
   4. 全程录像，并记录按压力曲线。
 
@@ -30,14 +30,17 @@ IMAGE_DIR.mkdir(parents=True, exist_ok=True)
 # ---------------- 参数 ----------------
 NEUTRAL_ARM = np.array([0.0, -0.96, 1.16, 0.0, -0.3, 0.0])
 GRIPPER_Q = 0.0084
+GRIPPER_CLOSED = 0.002   # 右夹爪完全闭合（指尖并拢当"拇指"用）
 UP = np.array([0.0, 0.0, 1.0])
+DOWN = np.array([0.0, 0.0, -1.0])
 
 CTRL_HZ = 50
 FPS = 25
 RUPTURE_FORCE = 1.0      # 模拟铝膜破裂的法向力阈值 (N)
 CUP_TOP = np.array([0.08, 0.05, 0.15])  # 杯口正上方（按压时目标泡罩对准这里）
-HOVER = 0.03             # 按压前悬停高度 (m)
+HOVER = 0.04             # 按压前指尖悬停高度 (m)
 PRESS_DEPTH = 0.02       # 相对药片中心的下压目标深度 (m)
+FINGER_OVERSHOOT = 0.012  # 指尖实际长度超出 gripper 站点的余量 (m)，实测校准
 LEFT_KP_SCALE = 15.0     # 左臂（持板）伺服刚度放大
 RIGHT_KP_SCALE = 8.0     # 右臂（按压）伺服刚度放大
 
@@ -73,7 +76,7 @@ class Demo:
         self.data = mujoco.MjData(self.model)
         self.n_sub = int(1.0 / CTRL_HZ / self.model.opt.timestep)
         self.left = ArmKinematics(self.model, "left", "pack_center")
-        self.right = ArmKinematics(self.model, "right", "stylus_tip_site")
+        self.right = ArmKinematics(self.model, "right", "right/gripper")
         self.renderer = mujoco.Renderer(self.model, height=720, width=1280)
         self.frames = []
         self.t = 0.0
@@ -91,6 +94,9 @@ class Demo:
             for aname, q in zip(ARM_JOINTS, NEUTRAL_ARM):
                 data.ctrl[model.actuator(f"{side}/{aname}").id] = q
             data.ctrl[model.actuator(f"{side}/gripper").id] = GRIPPER_Q
+        # 右夹爪闭合成"拇指"，左夹爪捏紧药板拉环
+        data.ctrl[model.actuator("right/gripper").id] = GRIPPER_CLOSED
+        data.ctrl[model.actuator("left/gripper").id] = 0.005
         mujoco.mj_forward(model, data)
 
         # 药片放入泡罩格（贴住铝膜上表面）
@@ -153,6 +159,14 @@ class Demo:
             pill_geom_id = model.geom(f"pill_{pocket}_geom").id
             foil_id = model.geom(f"foil_{pocket}").id
 
+            # 安全检查：药片是否还在本格泡罩内（横向偏差 < 8 mm）
+            mujoco.mj_forward(model, data)
+            in_pocket = np.linalg.norm(
+                pill_body.xpos[:2] - data.site(f"pocket_{pocket}").xpos[:2]) < 0.008
+            if not in_pocket:
+                print(f"[t={self.t:6.2f}s] 泡罩 {pocket} 药片已不在格内，跳过按压")
+                continue
+
             # 2a. 左臂微调：把当前泡罩格对准杯口正中（迭代两次消除偏航影响）
             for _ in range(2):
                 mujoco.mj_forward(model, data)
@@ -167,10 +181,11 @@ class Demo:
                 data.site(f"pocket_{pocket}").xpos[:2] - CUP_TOP[:2])
             print(f"[t={self.t:6.2f}s] 泡罩 {pocket} 对准杯口，偏差 {aim_err*1000:.1f} mm")
 
-            # 2b. 悬停目标 = 药片当前位置上方 HOVER
-            hover_pos = pill_body.xpos + np.array([0, 0, HOVER])
+            # 2b. 悬停目标 = 药片上方 HOVER，指尖（gripper 站点 x 轴）朝下
+            hover_pos = pill_body.xpos + np.array([0, 0, HOVER + FINGER_OVERSHOOT])
             q_hover, e, a = self.right.solve(
-                data, hover_pos, target_zaxis=UP, q_init=NEUTRAL_ARM)
+                data, hover_pos, target_zaxis=DOWN, local_axis=0,
+                q_init=self.right.q_now(data))
             print(f"IK 右臂悬停[{pocket}]: 误差 {e*1000:.1f}mm/{a:.1f}°")
             self.move_joint(self.right, q_hover, 1.6)
             self.dwell(0.4)
@@ -198,26 +213,39 @@ class Demo:
 
             for attempt, depth in enumerate((PRESS_DEPTH, PRESS_DEPTH + 0.012)):
                 mujoco.mj_forward(model, data)
-                press_pos = pill_body.xpos + np.array([0, 0, -depth])
+                press_pos = pill_body.xpos + np.array(
+                    [0, 0, FINGER_OVERSHOOT - depth])
+                pill_z0 = pill_body.xpos[2]
                 q_press, e, a = self.right.solve(
-                    data, press_pos, target_zaxis=UP, q_init=self.right.q_now(data))
+                    data, press_pos, target_zaxis=DOWN, local_axis=0,
+                    q_init=self.right.q_now(data))
                 print(f"IK 右臂按压[{pocket}] 第{attempt+1}次(深度{depth*1000:.0f}mm): "
                       f"误差 {e*1000:.1f}mm/{a:.1f}°")
                 q0 = self.right.q_now(data)
                 steps = int(2.0 * CTRL_HZ)
+                empty_press = False
                 for k in range(steps):
                     if state["ruptured"]:
                         break
                     s = minjerk((k + 1) / steps)
                     self.right.command(data, q0 + s * (q_press - q0))
                     self.step_ctrl(watch_force)
-                # 保压观察 0.8 s
-                for _ in range(int(0.8 * CTRL_HZ)):
-                    if state["ruptured"]:
+                    # 空压保护：指尖已低于药片初始平面 6mm 仍无接触力 → 立即中止
+                    tip_z = self.right.site_pos(data)[2] - FINGER_OVERSHOOT
+                    if tip_z < pill_z0 - 0.006 and peak < 0.05:
+                        empty_press = True
+                        print(f"[t={self.t:6.2f}s] 泡罩 {pocket} 空压保护触发，中止本次按压")
                         break
-                    self.step_ctrl(watch_force)
-                if state["ruptured"]:
+                # 保压观察 0.8 s
+                if not empty_press:
+                    for _ in range(int(0.8 * CTRL_HZ)):
+                        if state["ruptured"]:
+                            break
+                        self.step_ctrl(watch_force)
+                if state["ruptured"] or empty_press:
                     break
+                if peak < 0.05:
+                    break  # 完全无接触，深压重试也没有意义
             if not state["ruptured"]:
                 print(f"[t={self.t:6.2f}s] 泡罩 {pocket} 未破膜（峰值 {peak:.2f} N）")
 
@@ -240,7 +268,7 @@ class Demo:
             print(f"pill_{i} 最终位置 {np.round(p, 3)} -> {'√ 入杯' if ok else '× 未入杯'}")
         print(f"成功入杯: {in_cup}/3")
 
-        out = VIDEO_DIR / "pill_demo_v0.mp4"
+        out = VIDEO_DIR / "pill_demo_v1.mp4"
         imageio.mimsave(out, self.frames, fps=FPS, macro_block_size=1)
         print(f"视频: {out}（{len(self.frames)} 帧, {len(self.frames)/FPS:.1f} s）")
         self.renderer.close()
@@ -272,12 +300,12 @@ class Demo:
                    label=f"破膜阈值 {RUPTURE_FORCE}N")
         ax.set_xlabel("时间 (s)")
         ax.set_ylabel("药片-铝膜法向接触力 (N)")
-        ax.set_title("分药演示 v0：按压力曲线与破膜事件")
+        ax.set_title("分药演示 v1（徒手按压）：按压力曲线与破膜事件")
         ax.legend(loc="upper left", fontsize=9)
         ax.grid(alpha=0.3)
         fig.tight_layout()
-        fig.savefig(IMAGE_DIR / "pill_demo_v0_force.png")
-        print(f"力曲线: {IMAGE_DIR / 'pill_demo_v0_force.png'}")
+        fig.savefig(IMAGE_DIR / "pill_demo_v1_force.png")
+        print(f"力曲线: {IMAGE_DIR / 'pill_demo_v1_force.png'}")
 
 
 if __name__ == "__main__":
