@@ -2,6 +2,8 @@
 
 强化学习 × 世界模型 × VLA —— 从零搭建养老场景双臂移动操作机器人（自动分药 / 辅助测量血压）的学习记录与知识库。
 
+**在线访问**：<https://anoymous-code.github.io/RL4Robotics/>（推送到 `main` 分支后由 GitHub Actions 自动构建部署）
+
 ## 快速开始
 
 ```powershell
