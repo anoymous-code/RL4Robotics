@@ -1,8 +1,8 @@
 site_name: RL4Robotics · 移动操作学习实验室
 site_description: 强化学习 × 世界模型 × VLA —— 从零搭建养老场景双臂移动操作机器人（分药 / 量血压）的学习记录与知识库
 site_author: RL4Robotics
-site_url: https://zeldafromheaven.github.io/RL4Robotics/
-repo_url: https://github.com/ZeldaFromHeaven/RL4Robotics
+site_url: https://anoymous-code.github.io/RL4Robotics/
+repo_url: https://github.com/anoymous-code/RL4Robotics
 repo_name: RL4Robotics
 edit_uri: edit/main/docs/
 
