@@ -1,0 +1,158 @@
+/* ===== 全局字体与排版 ===== */
+body,
+input {
+  font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei",
+    "Noto Sans CJK SC", sans-serif;
+}
+
+code,
+pre,
+kbd {
+  font-family: "Cascadia Code", Consolas, "JetBrains Mono", Menlo, monospace;
+}
+
+/* ===== 首页 Hero 区 ===== */
+.hero {
+  padding: 2.4rem 2rem;
+  margin: 0 0 1.6rem;
+  border-radius: 1rem;
+  background: linear-gradient(135deg, #4527a0 0%, #7b1fa2 55%, #00897b 100%);
+  color: #fff;
+}
+
+.hero h1 {
+  color: #fff;
+  margin: 0 0 0.6rem;
+  font-size: 1.9rem;
+  font-weight: 700;
+}
+
+.hero p {
+  font-size: 0.86rem;
+  opacity: 0.92;
+  max-width: 40rem;
+}
+
+.hero .badges span {
+  display: inline-block;
+  margin: 0.15rem 0.3rem 0.15rem 0;
+  padding: 0.18rem 0.72rem;
+  border-radius: 2rem;
+  background: rgba(255, 255, 255, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  font-size: 0.68rem;
+  backdrop-filter: blur(4px);
+}
+
+/* ===== 统计卡片 ===== */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: 0.8rem;
+  margin: 1.2rem 0;
+}
+
+.stat-card {
+  padding: 1rem 1.2rem;
+  border-radius: 0.7rem;
+  border: 1px solid var(--md-default-fg-color--lightest);
+  background: var(--md-code-bg-color);
+  text-align: center;
+}
+
+.stat-card .num {
+  display: block;
+  font-size: 1.6rem;
+  font-weight: 700;
+  color: var(--md-primary-fg-color);
+}
+
+.stat-card .label {
+  font-size: 0.68rem;
+  color: var(--md-default-fg-color--light);
+}
+
+/* ===== Material 内置 grid cards 微调 ===== */
+.md-typeset .grid.cards > ul > li {
+  border-radius: 0.7rem;
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+
+.md-typeset .grid.cards > ul > li:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+  border-color: var(--md-accent-fg-color);
+}
+
+/* ===== 时间线（学习日志用） ===== */
+.timeline {
+  position: relative;
+  margin: 1rem 0 1rem 0.4rem;
+  padding-left: 1.4rem;
+  border-left: 2px solid var(--md-primary-fg-color--light);
+}
+
+.timeline .tl-item {
+  position: relative;
+  margin-bottom: 1.1rem;
+}
+
+.timeline .tl-item::before {
+  content: "";
+  position: absolute;
+  left: -1.83rem;
+  top: 0.28rem;
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 50%;
+  background: var(--md-accent-fg-color);
+  border: 2px solid var(--md-default-bg-color);
+}
+
+.timeline .tl-date {
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--md-primary-fg-color);
+  letter-spacing: 0.04em;
+}
+
+/* ===== 表格 ===== */
+.md-typeset table:not([class]) {
+  border-radius: 0.5rem;
+  overflow: hidden;
+  font-size: 0.72rem;
+}
+
+.md-typeset table:not([class]) th {
+  background: var(--md-primary-fg-color);
+  color: #fff;
+}
+
+/* ===== mermaid 图居中 ===== */
+.mermaid {
+  text-align: center;
+}
+
+/* ===== 难度/状态徽章 ===== */
+.badge {
+  display: inline-block;
+  padding: 0.1rem 0.55rem;
+  border-radius: 2rem;
+  font-size: 0.64rem;
+  font-weight: 700;
+  vertical-align: middle;
+}
+
+.badge-easy { background: #c8e6c9; color: #1b5e20; }
+.badge-mid { background: #fff9c4; color: #f57f17; }
+.badge-hard { background: #ffcdd2; color: #b71c1c; }
+.badge-doing { background: #bbdefb; color: #0d47a1; }
+.badge-done { background: #c8e6c9; color: #1b5e20; }
+.badge-todo { background: #eceff1; color: #455a64; }
+
+[data-md-color-scheme="slate"] .badge-easy { background: #2e7d32; color: #e8f5e9; }
+[data-md-color-scheme="slate"] .badge-mid { background: #f9a825; color: #212121; }
+[data-md-color-scheme="slate"] .badge-hard { background: #c62828; color: #ffebee; }
+[data-md-color-scheme="slate"] .badge-doing { background: #1565c0; color: #e3f2fd; }
+[data-md-color-scheme="slate"] .badge-done { background: #2e7d32; color: #e8f5e9; }
+[data-md-color-scheme="slate"] .badge-todo { background: #455a64; color: #eceff1; }

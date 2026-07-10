@@ -1,0 +1,16 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# MkDocs 构建产物（由 GitHub Actions 构建，不入库）
+site/
+
+# 实验产物缓存（大文件另行管理）
+*.ckpt
+*.pt
+wandb/
+
+# 系统文件
+Thumbs.db
+.DS_Store

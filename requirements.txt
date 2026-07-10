@@ -1,0 +1,8 @@
+# 知识库网站依赖（Python 3.8+ 即可）
+mkdocs-material>=9.7
+jieba>=0.42  # 中文搜索分词
+
+# —— 以下为阶段 0 学习环境依赖（需要 Python 3.10+，届时另建虚拟环境）——
+# torch
+# gymnasium[mujoco]
+# stable-baselines3
