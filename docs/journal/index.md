@@ -38,6 +38,6 @@
 ```
 
 !!! tip "多媒体嵌入方法"
-    - **图片**：放入 `docs/assets/images/`，用 `![说明](../assets/images/xxx.png)` 引用
-    - **视频**：放入 `docs/assets/videos/`，用 `<video controls src="../assets/videos/xxx.mp4"></video>` 嵌入
+    - **图片**：放入 `docs/assets/images/`，用 `![说明](../assets/images/xxx.png)` 引用（Markdown 语法会自动修正路径）
+    - **视频**：放入 `docs/assets/videos/`，用 `<video controls src="../../assets/videos/xxx.mp4"></video>` 嵌入（注意：HTML 标签不会自动修正路径，日志页面渲染后深一层目录，所以要用 `../../`）
     - **训练曲线**：matplotlib 导出 PNG/SVG，或后续接入 Trackio/W&B 截图

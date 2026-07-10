@@ -2,7 +2,11 @@
 mkdocs-material>=9.7
 jieba>=0.42  # 中文搜索分词
 
-# —— 以下为阶段 0 学习环境依赖（需要 Python 3.10+，届时另建虚拟环境）——
-# torch
+# —— 阶段 0 学习环境依赖（安装在 .venv，基于官方 Python 3.11，勿用 Anaconda 解释器）——
+# CUDA 版 torch 需单独安装：
+#   pip install torch --index-url https://download.pytorch.org/whl/cu128
 # gymnasium[mujoco]
 # stable-baselines3
+# imageio
+# imageio-ffmpeg
+# matplotlib
