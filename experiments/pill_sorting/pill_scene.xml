@@ -1,0 +1,61 @@
+﻿<mujoco model="aloha_pill_dispensing">
+  <include file="scene_nokey.xml"/>
+
+  <option timestep="0.001" integrator="implicitfast"/>
+
+  <visual>
+    <global offwidth="1280" offheight="720"/>
+  </visual>
+
+  <worldbody>
+    <!-- 璺熸媿鑽澘鐨勪富鏈轰綅 + 鍥哄畾渚ф満浣?-->
+    <camera name="follow_pack" mode="targetbodycom" target="pill_pack" pos="0.32 -0.38 0.42"/>
+    <camera name="side" pos="-0.60 -0.28 0.34" xyaxes="0.5165 -0.8563 0.0000 0.2453 0.1480 0.9581"/>
+
+    <!-- 涓夌矑鑽墖锛堣嚜鐢变綋锛屽垵濮嬩綅缃湪鑴氭湰涓憜鏀惧埌娉＄僵鏍煎唴锛?-->
+    <body name="pill_0" pos="0.40 -0.30 0.01">
+      <freejoint name="pill_0_joint"/>
+      <geom name="pill_0_geom" type="cylinder" size="0.005 0.002"
+        rgba="0.95 0.45 0.35 1" mass="0.0006" condim="4" friction="0.8 0.01 0.001"
+        contype="3" conaffinity="3" solref="0.002 1"/>
+    </body>
+    <body name="pill_1" pos="0.43 -0.30 0.01">
+      <freejoint name="pill_1_joint"/>
+      <geom name="pill_1_geom" type="cylinder" size="0.005 0.002"
+        rgba="0.98 0.80 0.30 1" mass="0.0006" condim="4" friction="0.8 0.01 0.001"
+        contype="3" conaffinity="3" solref="0.002 1"/>
+    </body>
+    <body name="pill_2" pos="0.46 -0.30 0.01">
+      <freejoint name="pill_2_joint"/>
+      <geom name="pill_2_geom" type="cylinder" size="0.005 0.002"
+        rgba="0.40 0.75 0.55 1" mass="0.0006" condim="4" friction="0.8 0.01 0.001"
+        contype="3" conaffinity="3" solref="0.002 1"/>
+    </body>
+
+    <!-- 鑽澂锛氬叓瑙掓澂澹?+ 搴曠洏锛屼腑蹇?(0.08, 0.05)锛屽崐寰?0.05锛屽楂?0.08锛堣搴﹀崟浣嶄负寮у害锛?-->
+    <geom name="cup_bottom" type="cylinder" size="0.054 0.0015" pos="0.08 0.05 0.0015" rgba="0.3 0.55 0.75 1"/>
+    <geom type="box" size="0.0025 0.023 0.04" pos="0.1300 0.0500 0.04" euler="0 0 0"      rgba="0.3 0.55 0.75 0.45"/>
+    <geom type="box" size="0.0025 0.023 0.04" pos="0.1154 0.0854 0.04" euler="0 0 0.7854" rgba="0.3 0.55 0.75 0.45"/>
+    <geom type="box" size="0.0025 0.023 0.04" pos="0.0800 0.1000 0.04" euler="0 0 1.5708" rgba="0.3 0.55 0.75 0.45"/>
+    <geom type="box" size="0.0025 0.023 0.04" pos="0.0446 0.0854 0.04" euler="0 0 2.3562" rgba="0.3 0.55 0.75 0.45"/>
+    <geom type="box" size="0.0025 0.023 0.04" pos="0.0300 0.0500 0.04" euler="0 0 3.1416" rgba="0.3 0.55 0.75 0.45"/>
+    <geom type="box" size="0.0025 0.023 0.04" pos="0.0446 0.0146 0.04" euler="0 0 3.9270" rgba="0.3 0.55 0.75 0.45"/>
+    <geom type="box" size="0.0025 0.023 0.04" pos="0.0800 0.0000 0.04" euler="0 0 4.7124" rgba="0.3 0.55 0.75 0.45"/>
+    <geom type="box" size="0.0025 0.023 0.04" pos="0.1154 0.0146 0.04" euler="0 0 5.4978" rgba="0.3 0.55 0.75 0.45"/>
+  </worldbody>
+
+  <contact>
+    <exclude body1="pill_pack" body2="left/left_finger_link"/>
+    <exclude body1="pill_pack" body2="left/right_finger_link"/>
+    <exclude body1="pill_pack" body2="left/gripper_base"/>
+    <exclude body1="stylus" body2="right/left_finger_link"/>
+    <exclude body1="stylus" body2="right/right_finger_link"/>
+    <exclude body1="stylus" body2="right/gripper_base"/>
+  </contact>
+
+  <custom>
+    <numeric name="pocket_xs" data="-0.03 0.0 0.03"/>
+    <numeric name="cup_center" data="0.08 0.05"/>
+  </custom>
+</mujoco>
+
