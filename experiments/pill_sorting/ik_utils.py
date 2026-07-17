@@ -19,12 +19,16 @@ class ArmKinematics:
 
     def solve(self, data_ref, target_pos, target_zaxis=None, q_init=None,
               iters=300, tol=1e-4, damping=0.05, step_scale=0.7, restarts=8, seed=0,
-              local_axis=2):
+              local_axis=2, axes=None):
         """迭代求解 IK（带随机重启）。返回 (q_solution, pos_err_m, axis_err_deg)。
 
-        target_zaxis: 站点局部轴（由 local_axis 指定 0/1/2 = x/y/z）要对齐的世界方向。
+        姿态目标两种写法（二选一）：
+          - target_zaxis + local_axis: 单轴对齐（0/1/2 = 站点局部 x/y/z）
+          - axes=[(local_axis, world_dir), ...]: 多轴同时对齐
         在 data_ref 的副本上操作——其余关节（另一只手臂等）保持 data_ref 中的值。
         """
+        if axes is None:
+            axes = [] if target_zaxis is None else [(local_axis, target_zaxis)]
         rng = np.random.default_rng(seed)
         best = None
         inits = [q_init if q_init is not None else data_ref.qpos[self.qpos_ids].copy()]
@@ -32,8 +36,8 @@ class ArmKinematics:
             lo, hi = self.jnt_range[:, 0], self.jnt_range[:, 1]
             inits.append(lo + (hi - lo) * rng.random(len(self.qpos_ids)))
         for q0 in inits:
-            sol = self._solve_once(data_ref, target_pos, target_zaxis, q0,
-                                   iters, tol, damping, step_scale, local_axis)
+            sol = self._solve_once(data_ref, target_pos, axes, q0,
+                                   iters, tol, damping, step_scale)
             score = sol[1] + np.radians(sol[2]) * 0.1
             if best is None or score < best[0]:
                 best = (score, sol)
@@ -41,8 +45,8 @@ class ArmKinematics:
                 break
         return best[1]
 
-    def _solve_once(self, data_ref, target_pos, target_zaxis, q_init,
-                    iters, tol, damping, step_scale, local_axis=2):
+    def _solve_once(self, data_ref, target_pos, axes, q_init,
+                    iters, tol, damping, step_scale):
         data = mujoco.MjData(self.model)
         data.qpos[:] = data_ref.qpos
         if q_init is not None:
@@ -59,9 +63,10 @@ class ArmKinematics:
             rows = [target_pos - pos]
             mujoco.mj_jacSite(self.model, data, jacp, jacr, self.site_id)
             jac_rows = [jacp[:, self.dof_ids]]
-            if target_zaxis is not None:
-                tz = target_zaxis / np.linalg.norm(target_zaxis)
-                cur_a = rot[:, local_axis]
+            for ax_idx, world_dir in axes:
+                tz = np.asarray(world_dir, dtype=float)
+                tz = tz / np.linalg.norm(tz)
+                cur_a = rot[:, ax_idx]
                 # 误差与雅可比保持一致：误差 = 轴向量差，雅可比 = d(cur_a)/dq
                 rows.append((tz - cur_a) * 0.35)
                 jz = np.empty((3, len(self.dof_ids)))
@@ -83,9 +88,11 @@ class ArmKinematics:
         rot = data.site_xmat[self.site_id].reshape(3, 3)
         pos_err = float(np.linalg.norm(target_pos - pos))
         axis_err = 0.0
-        if target_zaxis is not None:
-            tz = target_zaxis / np.linalg.norm(target_zaxis)
-            axis_err = float(np.degrees(np.arccos(np.clip(rot[:, local_axis] @ tz, -1, 1))))
+        for ax_idx, world_dir in axes:
+            tz = np.asarray(world_dir, dtype=float)
+            tz = tz / np.linalg.norm(tz)
+            err = float(np.degrees(np.arccos(np.clip(rot[:, ax_idx] @ tz, -1, 1))))
+            axis_err = max(axis_err, err)
         return data.qpos[self.qpos_ids].copy(), pos_err, axis_err
 
     def q_now(self, data):

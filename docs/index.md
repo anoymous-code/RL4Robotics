@@ -72,13 +72,13 @@ graph LR
 
 <div class="stat-grid" markdown>
 <div class="stat-card" markdown><span class="num">0</span><span class="label">当前阶段 / 共 7 阶段</span></div>
-<div class="stat-card" markdown><span class="num">2</span><span class="label">学习日志篇数</span></div>
-<div class="stat-card" markdown><span class="num">4</span><span class="label">完成的仿真实验</span></div>
-<div class="stat-card" markdown><span class="num">3/3</span><span class="label">分药 v1 徒手入杯成功率</span></div>
+<div class="stat-card" markdown><span class="num">3</span><span class="label">学习日志篇数</span></div>
+<div class="stat-card" markdown><span class="num">5</span><span class="label">完成的仿真实验</span></div>
+<div class="stat-card" markdown><span class="num">2/2</span><span class="label">分药 v2 撕剪入托盘成功率</span></div>
 </div>
 
 !!! success "最新进展 · 2026-07-17"
-    **三机位同步可视化上线**：分药演示现在同时录制主视角与左右腕相机画面——腕相机正是未来模仿学习策略的标准观测输入。[看三机位视频 →](journal/2026-07-17.md)
+    **分药 v2 撕剪分装达成**：任务升级为贴近真实流程的"撕剪"——8 格铝塑板以可断裂焊接约束当易撕线，双臂协同撕下单格（药片保持密封）投入托盘，2/2 成功，附易撕线载荷曲线。[看撕剪演示 →](journal/2026-07-17-tear.md)
 
 !!! tip "如何使用这个网站"
     - **[学习路线图](roadmap.md)**：整个项目的地图，随时回来看看我们走到哪了。
