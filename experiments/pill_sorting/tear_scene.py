@@ -1,11 +1,12 @@
-"""分药 v4 场景：轮式移动分药工作站（双臂 + 差速底盘近似）。
+"""分药 v5 场景：轮式移动操作机器人（双臂并排朝前）+ 固定桌子。
 
-- 双臂、载物台面、盒 A（插板架）、盒 B（药片盒）全部装在 mobile_base 车体上；
-- 底盘用平面三关节（世界系 x / y + 车体 yaw）+ 位置伺服近似差速底盘运动学，
+- 机器人 = 小车体 + 两条 vx300s 臂并排朝前（Mobile ALOHA 形态，车头=车体局部 +y）；
+  底盘用平面三关节（世界系 x / y + 车体 yaw）+ 位置伺服近似差速底盘运动学，
   轮-地接触不建模（轮子为纯视觉几何）；
+- 盒 A（插板架）、盒 B（药片盒）、药板都放在**固定的桌子**上（桌面顶 z=0）；
 - 药板 = 手柄条（strip，自由体）+ 8 格（2x4，自由体），以 12 条可断裂焊接约束
- （易撕线）相连，竖插在盒 A 中间槽位随车行驶（纯接触，无固定）；
-- 车从充电桩驶到房间中央工作位后，执行取板 → 撕剪 → 入盒 B → 放回盒 A。
+ （易撕线）相连，竖插在盒 A 中间槽位；
+- 机器人从充电桩驶到桌前停稳，双臂执行取板 → 撕剪 → 入盒 B → 放回盒 A。
 
 直接运行本文件可做几何/坐标探测并渲染静帧：
     ../../.venv/Scripts/python.exe tear_scene.py
@@ -32,14 +33,18 @@ BOARD_XMAX = COL_X0 + 3 * PITCH_X + SEG_HX     # 板自由端（局部 +x 边缘
 
 PILL_COLORS = ["0.95 0.45 0.35", "0.98 0.80 0.30", "0.40 0.75 0.55", "0.45 0.60 0.90"]
 
-# ---------- 底盘 ----------
-# 车体局部系：台面顶面 z=0（与 v3 世界系一致），地面 z=-0.75；
+# ---------- 机器人（轮式底盘 + 并排双臂） ----------
+# 车体局部系：原点 = 两臂基座中点的地面投影，车头 = 局部 +y，臂基座平台顶 z=0；
 # 底盘三关节 base_x/base_y（世界系平移）+ base_yaw，位置伺服近似差速运动学
-BASE_START = np.array([-1.35, -0.50, 0.0])   # 充电桩旁出发位 (x, y, yaw)
-BASE_WORK = np.array([0.0, 0.0, 0.0])        # 工作位：局部系与世界系重合
+ARM_SPACING = 0.47                            # 两臂基座间距（并排，左臂 -x / 右臂 +x）
+BASE_START = np.array([-1.35, -1.50, 0.0])    # 充电桩旁出发位 (x, y, yaw)
+BASE_WORK = np.array([0.0, -0.22, 0.0])       # 桌前停车位：车头(+y)朝向桌子
 
-# ---------- 盒 A（插板架）与盒 B（药片盒），车体局部坐标 ----------
-BOX_A_CENTER = np.array([-0.22, -0.10, 0.0])
+# ---------- 固定桌子（世界系，桌面顶 z=0） ----------
+TABLE_CENTER_Y = 0.40                          # 桌面中心 y（桌深 0.76，近缘 y=0.02）
+
+# ---------- 盒 A（插板架）与盒 B（药片盒），固定桌面世界坐标 ----------
+BOX_A_CENTER = np.array([-0.20, 0.16, 0.0])
 SLOT_PITCH = 0.014          # 槽间距（x 向）；槽宽 = pitch - 隔板厚
 SLOT_WALL_T = 0.002         # 隔板半厚
 BOX_A_HY = 0.032            # 内腔 y 半宽
@@ -50,7 +55,7 @@ BOARD_UP_QUAT = np.array([0.7071068, 0.0, 0.7071068, 0.0])  # Ry(90°)
 BOARD_HOME = np.array([BOX_A_CENTER[0], BOX_A_CENTER[1],
                        BOX_A_FLOOR_TOP + BOARD_XMAX + 0.002])
 
-BOX_B_CENTER = np.array([0.13, -0.09, 0.0])
+BOX_B_CENTER = np.array([0.16, 0.14, 0.0])
 BOX_B_HX, BOX_B_HY, BOX_B_WALL_H = 0.09, 0.075, 0.03
 
 
@@ -86,27 +91,36 @@ def _quat_to_mat(quat):
     return m.reshape(3, 3)
 
 
-def furniture_xml():
-    """车载家具（mobile_base 车体局部坐标）：台面、车体、轮子、盒 A、装饰板、盒 B。
+def robot_xml():
+    """机器人车体几何（mobile_base 车体局部坐标，车头 = 局部 +y）。
 
-    由 gen_tear_model.py 嵌入 aloha_tear.xml 的 mobile_base body 中。
+    由 gen_tear_model.py 嵌入 aloha_tear.xml 的 mobile_base body 中；
+    双臂基座另行挂在 mobile_base 下（并排 ±ARM_SPACING/2，朝 +y）。
     """
     parts = [
-        # 台面（顶面 z=0，与 v3 桌面同高，双臂底座与盒子都在其上）
-        '<geom name="cart_top" type="box" size="0.56 0.38 0.02" pos="0 0 -0.02" '
-        'mass="15" rgba="0.82 0.80 0.76 1"/>',
-        # 车体（纯视觉，底盘高度由无 z 自由度的平面关节保证）
-        '<geom name="cart_body" type="box" size="0.50 0.33 0.31" pos="0 0 -0.35" '
-        'contype="0" conaffinity="0" mass="45" rgba="0.25 0.27 0.30 1"/>',
-        '<geom type="box" size="0.505 0.335 0.03" pos="0 0 -0.10" '
+        # 臂基座平台（顶面 z=0）
+        '<geom name="robot_deck" type="box" size="0.30 0.20 0.015" pos="0 0 -0.015" '
+        'mass="8" rgba="0.30 0.32 0.35 1"/>',
+        # 车身立柱（纯视觉，底盘高度由无 z 自由度的平面关节保证）
+        '<geom name="robot_body" type="box" size="0.26 0.17 0.26" pos="0 -0.02 -0.29" '
+        'contype="0" conaffinity="0" mass="40" rgba="0.25 0.27 0.30 1"/>',
+        '<geom type="box" size="0.265 0.175 0.025" pos="0 -0.02 -0.08" '
         'contype="0" conaffinity="0" mass="1" rgba="0.20 0.55 0.55 1"/>',
+        # 底盘（碰撞体，防撞桌腿/道具）
+        '<geom name="robot_chassis" type="box" size="0.28 0.20 0.075" pos="0 -0.02 -0.62" '
+        'mass="20" rgba="0.15 0.16 0.18 1"/>',
     ]
     for sx in (-1, 1):  # 四轮（纯视觉）
         for sy in (-1, 1):
-            parts.append(f'<geom type="cylinder" size="0.09 0.032" '
-                         f'pos="{sx * 0.36} {sy * 0.30} -0.66" quat="0.7071 0.7071 0 0" '
+            parts.append(f'<geom type="cylinder" size="0.075 0.030" '
+                         f'pos="{sx * 0.22} {sy * 0.14 - 0.02} -0.675" quat="0.7071 0.7071 0 0" '
                          f'contype="0" conaffinity="0" mass="1.5" rgba="0.12 0.12 0.13 1"/>')
+    return "\n".join("      " + p for p in parts)
 
+
+def boxes_xml():
+    """固定桌面上的盒 A（插板架 + 装饰板）与盒 B（药片盒），世界坐标。"""
+    parts = []
     # 盒 A：3 槽插板架
     ax, ay = BOX_A_CENTER[0], BOX_A_CENTER[1]
     inner_hx = 1.5 * SLOT_PITCH + SLOT_WALL_T
@@ -140,21 +154,20 @@ def furniture_xml():
         py = by + sy * (BOX_B_HY + 0.003)
         parts.append(f'<geom type="box" size="{hx} {hy} {BOX_B_WALL_H}" '
                      f'pos="{px:.4f} {py:.4f} {BOX_B_WALL_H}" rgba="0.30 0.55 0.75 0.5"/>')
-
-    return "\n".join("      " + p for p in parts)
+    return "\n".join("    " + p for p in parts)
 
 
 def build_xml():
     """生成完整场景 XML 字符串。
 
-    药板初始竖插在"位于出发点的车"上的盒 A 中间槽（焊接 relpose 取 qpos0，
+    药板初始竖插在固定桌上盒 A 的中间槽（焊接 relpose 取 qpos0，
     整板任意全局位姿不影响格间刚性布局）。
     """
     R0 = _quat_to_mat(BOARD_UP_QUAT)
     quat_str = " ".join(f"{q:.7f}" for q in BOARD_UP_QUAT)
 
-    # 药板：strip 自由体，初始在出发点的车上
-    strip_p = BOARD_HOME + np.array([BASE_START[0], BASE_START[1], 0.0])
+    # 药板：strip 自由体，初始在固定桌上的盒 A 槽中
+    strip_p = BOARD_HOME
     bodies = [f"""
     <body name="strip" pos="{strip_p[0]:.6f} {strip_p[1]:.6f} {strip_p[2]:.6f}" quat="{quat_str}">
       <freejoint name="strip_joint"/>
@@ -209,9 +222,10 @@ def build_xml():
   </visual>
 
   <worldbody>
-    <camera name="follow_pack" mode="targetbody" target="strip" pos="0.42 -0.40 0.38"/>
-    <camera name="side" pos="-0.60 -0.28 0.34" xyaxes="0.5165 -0.8563 0.0000 0.2453 0.1480 0.9581"/>
-    <camera name="room" mode="targetbody" target="mobile_base" pos="1.30 -1.55 0.85"/>
+    <camera name="follow_pack" mode="targetbody" target="strip" pos="0.55 -0.55 0.45"/>
+    <camera name="side" pos="-0.75 -0.35 0.40" xyaxes="0.5165 -0.8563 0.0000 0.2453 0.1480 0.9581"/>
+    <camera name="room" mode="targetbody" target="mobile_base" pos="1.55 -1.60 0.90"/>
+{boxes_xml()}
 {''.join(bodies)}
   </worldbody>
 
@@ -301,21 +315,27 @@ if __name__ == "__main__":
             data.ctrl[model.actuator(f"{side}/{jname}").id] = q
     mujoco.mj_forward(model, data)
 
-    # 沉降：板在槽中落座后应保持竖立、随车不动
+    # 沉降：板在固定桌上盒 A 槽中落座后应保持竖立
     for _ in range(1500):
         mujoco.mj_step(model, data)
     s = data.body("strip")
     Rz = s.xmat.reshape(3, 3)
-    home_w = BOARD_HOME + np.array([BASE_START[0], BASE_START[1], 0.0])
-    print(f"沉降后 strip 位置: {np.round(s.xpos, 4)}（初始 {np.round(home_w, 4)}）")
+    print(f"沉降后 strip 位置: {np.round(s.xpos, 4)}（初始 {np.round(BOARD_HOME, 4)}）")
     print(f"沉降后板局部 x 轴（应≈[0,0,-1]）: {np.round(Rz[:, 0], 3)}")
     print(f"底盘位置: {np.round([data.qpos[model.joint('base_x').qposadr[0]], data.qpos[model.joint('base_y').qposadr[0]]], 4)}")
     print(f"w_strip_f 静载: {weld_load(model, data, 'w_strip_f'):.3f}")
+    for side in ("left", "right"):
+        b = data.body(f"{side}/base_link")
+        print(f"{side} 臂基座世界位置: {np.round(b.xpos, 3)}")
 
+    # 再看停到桌前工作位的可达性
+    set_base(model, data, BASE_WORK)
+    mujoco.mj_forward(model, data)
+    place_segments(model, data)
     renderer = mujoco.Renderer(model, height=720, width=1280)
     (HERE / "debug").mkdir(exist_ok=True)
-    for cam in ("room", "follow_pack"):
+    for cam in ("room", "follow_pack", "side"):
         renderer.update_scene(data, camera=cam)
         imageio.imwrite(HERE / "debug" / f"full_probe_{cam}.png", renderer.render())
     renderer.close()
-    print("已渲染 debug/full_probe_*.png")
+    print("已渲染 debug/full_probe_*.png（底盘置于桌前工作位）")

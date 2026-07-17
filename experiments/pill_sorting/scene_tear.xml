@@ -49,10 +49,14 @@
     <light pos="-1.2 -0.6 2.2" diffuse="0.35 0.35 0.35"/>
     <geom name="floor" size="3 3 0.05" type="plane" material="groundplane" pos="0 0 -.75"/>
     <site name="worldref" pos="0 0 -0.75"/>
+    <!-- 固定桌子：桌面顶 z=0，盒 A/盒 B/药板都在其上 -->
+    <geom mesh="tabletop" material="table" class="visual" pos="0 0.4 -0.75" quat="1 0 0 1"/>
+    <geom mesh="tablelegs" material="table" class="visual" pos="0 0.4 -0.75" quat="1 0 0 1"/>
+    <geom name="table" pos="0 0.4 -0.1009" size="0.61 0.37 0.1" type="box" class="collision"/>
     <!-- 房间道具：药柜、矮柜、充电桩 -->
-    <geom name="med_cabinet" type="box" size="0.25 0.18 0.45" pos="0.95 0.85 -0.30" rgba="0.55 0.45 0.35 1"/>
-    <geom type="box" size="0.22 0.02 0.12" pos="0.95 0.68 -0.28" rgba="0.65 0.56 0.45 1"/>
-    <geom name="side_table" type="box" size="0.30 0.20 0.25" pos="-1.25 0.85 -0.50" rgba="0.42 0.50 0.55 1"/>
-    <geom name="dock" type="box" size="0.04 0.28 0.18" pos="-1.62 -0.50 -0.57" rgba="0.20 0.55 0.38 1"/>
+    <geom name="med_cabinet" type="box" size="0.25 0.18 0.45" pos="1.20 0.85 -0.30" rgba="0.55 0.45 0.35 1"/>
+    <geom type="box" size="0.22 0.02 0.12" pos="1.20 0.68 -0.28" rgba="0.65 0.56 0.45 1"/>
+    <geom name="side_table" type="box" size="0.30 0.20 0.25" pos="-1.35 0.85 -0.50" rgba="0.42 0.50 0.55 1"/>
+    <geom name="dock" type="box" size="0.04 0.28 0.18" pos="-1.72 -1.50 -0.57" rgba="0.20 0.55 0.38 1"/>
   </worldbody>
 </mujoco>

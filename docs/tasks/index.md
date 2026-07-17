@@ -44,7 +44,7 @@
 | 徒手双臂协同按压（v1，指尖直压，3/3） | A | <span class="badge badge-done">完成</span> | [2026-07-10 · 实验 3](../journal/2026-07-10.md#exp3-pill-v1) |
 | 撕剪分装 v2（8 格板撕单格入托盘，2/2） | A | <span class="badge badge-done">完成</span> | [2026-07-17 (下)](../journal/2026-07-17-tear.md) |
 | 全闭环 v3（盒 A 取板→撕剪→入盒 B→放回盒 A） | A | <span class="badge badge-done">完成</span> | [2026-07-17 (晚)](../journal/2026-07-17-full.md) |
-| 轮式移动工作站 v4（导航 + 全闭环分药） | A | <span class="badge badge-done">完成</span> | [2026-07-18](../journal/2026-07-18-mobile.md) |
+| 移动操作机器人 v5（轮式双臂 + 固定桌，导航 + 全闭环分药） | A | <span class="badge badge-done">完成</span> | [2026-07-18](../journal/2026-07-18-mobile.md) |
 | 目标格随机化 + 鲁棒性评测 | A | <span class="badge badge-todo">未开始</span> | - |
 | 分药 Gymnasium 环境 + 域随机化 | A | <span class="badge badge-todo">未开始</span> | - |
 | 铝塑板按压策略（学习版） | A | <span class="badge badge-todo">未开始</span> | - |
