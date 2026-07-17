@@ -88,6 +88,7 @@ nav:
   - 学习路线图: roadmap.md
   - 核心概念:
       - 第一课 · 三大技术支柱总览: concepts/overview.md
+      - 第二课 · 从脚本控制到学习策略: concepts/from-script-to-policy.md
       - 术语表: concepts/glossary.md
   - 目标任务:
       - 任务总览: tasks/index.md
