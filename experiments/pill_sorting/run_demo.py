@@ -1,4 +1,4 @@
-"""分药任务 v1：ALOHA 双臂徒手协同演示（无工具）。
+"""分药任务 v1：ALOHA 双臂徒手协同演示（无工具），多机位同步录制。
 
 编排方式：离线 IK 解出各关键位姿的关节构型，再用关节空间最小加加速度插值执行。
 
@@ -6,12 +6,14 @@
   1. 左臂夹持药板（3 格泡罩，底面朝下为铝膜），移动到药杯正上方；
   2. 右臂夹爪完全闭合，指尖朝下，像人的拇指一样逐格下压；
   3. 铝膜以"药片-铝膜法向接触力阈值"模拟破裂——超阈值后该格铝膜失效，药片坠入药杯；
-  4. 全程录像，并记录按压力曲线。
+  4. 全程三机位同步录像（主视角 + 左右腕相机），并记录按压力曲线。
 
 运行:
     cd experiments/pill_sorting && ../../.venv/Scripts/python.exe run_demo.py
+    加 --live 可在本机弹窗实时观看三机位画面（需要图形界面）。
 """
 
+import argparse
 from pathlib import Path
 
 import imageio.v2 as imageio
@@ -68,8 +70,86 @@ def contact_normal_force(model, data, g1_id, g2_id):
     return total
 
 
-class Demo:
+class MultiCam:
+    """三机位同步渲染：主视角 1280x720 在上，左右腕相机 640x360 并排在下。"""
+
+    MAIN = "follow_pack"
+    WRIST_L = "wrist_cam_left"
+    WRIST_R = "wrist_cam_right"
+
+    def __init__(self, model):
+        self.main = mujoco.Renderer(model, height=720, width=1280)
+        self.wrist = mujoco.Renderer(model, height=360, width=640)
+        try:
+            from PIL import ImageFont
+
+            self._font = ImageFont.truetype(r"C:\Windows\Fonts\msyh.ttc", 26)
+        except Exception:
+            self._font = None
+
+    def _label(self, img, text):
+        if self._font is None:
+            return img
+        from PIL import Image, ImageDraw
+
+        im = Image.fromarray(img)
+        draw = ImageDraw.Draw(im, "RGBA")
+        draw.rectangle([8, 8, 24 + 26 * len(text), 48], fill=(0, 0, 0, 130))
+        draw.text((16, 12), text, font=self._font, fill=(255, 255, 255, 230))
+        return np.asarray(im)
+
+    def composite(self, data):
+        self.main.update_scene(data, camera=self.MAIN)
+        top = self._label(self.main.render().copy(), "主视角")
+        self.wrist.update_scene(data, camera=self.WRIST_L)
+        wl = self._label(self.wrist.render().copy(), "左腕相机")
+        self.wrist.update_scene(data, camera=self.WRIST_R)
+        wr = self._label(self.wrist.render().copy(), "右腕相机")
+        bottom = np.hstack([wl, wr])
+        frame = np.vstack([top, bottom])
+        # 面板分隔线
+        frame[718:722, :] = 30
+        frame[720:, 638:642] = 30
+        return frame
+
+    def close(self):
+        self.main.close()
+        self.wrist.close()
+
+
+class LiveWindow:
+    """--live 模式：用 matplotlib 弹窗近实时显示合成画面（本机运行用）。"""
+
     def __init__(self):
+        import matplotlib
+
+        matplotlib.use("TkAgg")
+        import matplotlib.pyplot as plt
+
+        self.plt = plt
+        plt.ion()
+        self.fig, ax = plt.subplots(figsize=(10.6, 9), num="分药演示 · 三机位实时画面")
+        ax.set_axis_off()
+        self.fig.tight_layout(pad=0)
+        self.im = None
+        self.ax = ax
+
+    def show(self, frame):
+        if self.im is None:
+            self.im = self.ax.imshow(frame)
+        else:
+            self.im.set_data(frame)
+        self.fig.canvas.draw_idle()
+        self.fig.canvas.flush_events()
+        self.plt.pause(0.001)
+
+    def close(self):
+        self.plt.ioff()
+        self.plt.close(self.fig)
+
+
+class Demo:
+    def __init__(self, live=False):
         self.model = mujoco.MjModel.from_xml_path(str(HERE / "pill_scene.xml"))
         stiffen_arm(self.model, "left", LEFT_KP_SCALE)
         stiffen_arm(self.model, "right", RIGHT_KP_SCALE)
@@ -77,7 +157,13 @@ class Demo:
         self.n_sub = int(1.0 / CTRL_HZ / self.model.opt.timestep)
         self.left = ArmKinematics(self.model, "left", "pack_center")
         self.right = ArmKinematics(self.model, "right", "right/gripper")
-        self.renderer = mujoco.Renderer(self.model, height=720, width=1280)
+        self.cams = MultiCam(self.model)
+        self.live = None
+        if live:
+            try:
+                self.live = LiveWindow()
+            except Exception as exc:  # 无图形界面时优雅退化为仅录像
+                print(f"实时窗口不可用（{exc}），仅录制视频")
         self.frames = []
         self.t = 0.0
         self.force_log = {"t": [], "force": [], "pocket": []}
@@ -118,8 +204,10 @@ class Demo:
         if extra_cb:
             extra_cb()
         if len(self.frames) * (1.0 / FPS) <= self.t:
-            self.renderer.update_scene(self.data, camera="follow_pack")
-            self.frames.append(self.renderer.render().copy())
+            frame = self.cams.composite(self.data)
+            self.frames.append(frame)
+            if self.live is not None:
+                self.live.show(frame)
 
     def move_joint(self, arm, q_target, secs, extra_cb=None):
         """关节空间最小加加速度轨迹。"""
@@ -268,10 +356,12 @@ class Demo:
             print(f"pill_{i} 最终位置 {np.round(p, 3)} -> {'√ 入杯' if ok else '× 未入杯'}")
         print(f"成功入杯: {in_cup}/3")
 
-        out = VIDEO_DIR / "pill_demo_v1.mp4"
+        out = VIDEO_DIR / "pill_demo_v1_multicam.mp4"
         imageio.mimsave(out, self.frames, fps=FPS, macro_block_size=1)
         print(f"视频: {out}（{len(self.frames)} 帧, {len(self.frames)/FPS:.1f} s）")
-        self.renderer.close()
+        self.cams.close()
+        if self.live is not None:
+            self.live.close()
         self.plot_force()
         return in_cup
 
@@ -309,4 +399,8 @@ class Demo:
 
 
 if __name__ == "__main__":
-    Demo().run()
+    parser = argparse.ArgumentParser(description="ALOHA 双臂分药演示（三机位）")
+    parser.add_argument("--live", action="store_true",
+                        help="弹窗实时显示三机位画面（需要图形界面）")
+    args = parser.parse_args()
+    Demo(live=args.live).run()

@@ -26,9 +26,12 @@ powershell -File ..\..\scripts\download_assets.ps1
 
 ```powershell
 cd experiments\pill_sorting
-..\..\.venv\Scripts\python.exe run_demo.py
-# 产出: docs/assets/videos/pill_demo_v0.mp4 与 docs/assets/images/pill_demo_v0_force.png
+..\..\.venv\Scripts\python.exe run_demo.py          # 录制三机位视频
+..\..\.venv\Scripts\python.exe run_demo.py --live   # 同时弹窗实时观看（需图形界面）
+# 产出: docs/assets/videos/pill_demo_v1_multicam.mp4 与 docs/assets/images/pill_demo_v1_force.png
 ```
+
+视频布局：主视角（1280x720）在上，左右腕相机（各 640x360）并排在下，三路画面同一仿真时刻同步渲染。
 
 ## 已知简化（v1 待办）
 
