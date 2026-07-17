@@ -72,13 +72,13 @@ graph LR
 
 <div class="stat-grid" markdown>
 <div class="stat-card" markdown><span class="num">0</span><span class="label">当前阶段 / 共 7 阶段</span></div>
-<div class="stat-card" markdown><span class="num">3</span><span class="label">学习日志篇数</span></div>
-<div class="stat-card" markdown><span class="num">5</span><span class="label">完成的仿真实验</span></div>
-<div class="stat-card" markdown><span class="num">2/2</span><span class="label">分药 v2 撕剪入托盘成功率</span></div>
+<div class="stat-card" markdown><span class="num">4</span><span class="label">学习日志篇数</span></div>
+<div class="stat-card" markdown><span class="num">6</span><span class="label">完成的仿真实验</span></div>
+<div class="stat-card" markdown><span class="num">2/2+回收</span><span class="label">分药 v3 全流程成功</span></div>
 </div>
 
 !!! success "最新进展 · 2026-07-17"
-    **分药 v2 撕剪分装达成**：任务升级为贴近真实流程的"撕剪"——8 格铝塑板以可断裂焊接约束当易撕线，双臂协同撕下单格（药片保持密封）投入托盘，2/2 成功，附易撕线载荷曲线。[看撕剪演示 →](journal/2026-07-17-tear.md)
+    **分药 v3 全闭环达成**：药板竖插在装有多块铝塑板的盒 A 插板架中，左手真实抓取提出、空中转体，双臂撕剪两格投入盒 B（2/2），剩板插回盒 A 原槽位，53 秒全流程一气呵成。[看全流程演示 →](journal/2026-07-17-full.md)
 
 !!! tip "如何使用这个网站"
     - **[学习路线图](roadmap.md)**：整个项目的地图，随时回来看看我们走到哪了。
