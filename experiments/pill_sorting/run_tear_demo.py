@@ -28,8 +28,9 @@ UP = np.array([0.0, 0.0, 1.0])
 STRIP_HOLD = np.array([0.00, 0.03, 0.17])   # 左手持板位（strip 中心）
 APPROACH_DIR = np.array([1.0, 0.0, 0.0])    # 右手从 +x 自由端水平接近（指向 -x）
 GRIP_OPEN = 0.025
-GRIP_CLOSE = 0.0018
+GRIP_CLOSE = 0.0006   # 指间隙 1.2mm，对 2.4mm 薄板每侧 0.6mm 过盈
 TIP_BEHIND_SITE = 0.0138  # 指尖在 gripper 站点后方的距离（实测标定）
+TIP_ABOVE_SITE = 0.0022   # 指腹中心在站点上方的距离（实测标定）——薄板必须补偿
 EDGE_OVERLAP = 0.007      # 指尖与板缘的重叠量（穹顶无碰撞，可放心深捏）
 PREGRASP_BACKOFF = 0.05   # 预抓取后撤距离 (m)
 TEAR_LOAD = 6.0           # 易撕线断裂载荷阈值（efc 合力）
@@ -50,6 +51,9 @@ class TearDemo:
         ga = self.model.actuator("right/gripper")
         self.model.actuator_gainprm[ga.id, 0] *= 3.0
         self.model.actuator_biasprm[ga.id, 1] *= 3.0
+        # 放开 ctrlrange 下限（0.002 是真机软件限位；物理关节量程到 0）：
+        # 否则指间隙最小 4mm，捏不住 2.4mm 薄板
+        self.model.actuator_ctrlrange[ga.id, 0] = 0.0
         self.data = mujoco.MjData(self.model)
         self.n_sub = int(1.0 / CTRL_HZ / self.model.opt.timestep)
         self.left = ArmKinematics(self.model, "left", "strip_center")
@@ -173,9 +177,10 @@ class TearDemo:
             def site_target():
                 mujoco.mj_forward(model, data)
                 seg_pos = data.body(seg).xpos.copy()
-                # 指尖落在 板缘 - EDGE_OVERLAP 处；站点在指尖前方 TIP_BEHIND_SITE
+                # 指尖落在 板缘 - EDGE_OVERLAP 处；站点在指尖前方 TIP_BEHIND_SITE、
+                # 下方 TIP_ABOVE_SITE（使指腹中心正对板面中心）
                 return seg_pos + np.array(
-                    [ts.SEG_HX - EDGE_OVERLAP - TIP_BEHIND_SITE, 0, 0])
+                    [ts.SEG_HX - EDGE_OVERLAP - TIP_BEHIND_SITE, 0, -TIP_ABOVE_SITE])
 
             data.ctrl[self.right_grip] = GRIP_OPEN
             pre = site_target() + APPROACH_DIR * PREGRASP_BACKOFF

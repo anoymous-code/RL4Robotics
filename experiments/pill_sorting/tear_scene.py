@@ -13,7 +13,7 @@ HERE = Path(__file__).resolve().parent
 
 # ---------- 板块布局（strip 局部坐标，单位 m） ----------
 N_COLS, N_ROWS = 4, 2
-SEG_HX, SEG_HY, SEG_HZ = 0.0115, 0.0115, 0.003    # 单格半尺寸（厚 6mm 便于夹持）
+SEG_HX, SEG_HY, SEG_HZ = 0.0115, 0.0115, 0.0012   # 单格半尺寸（板厚 2.4mm，贴近真实铝塑板）
 PITCH_X, PITCH_Y = 0.024, 0.025
 COL_X0 = 0.0225            # 第 0 列中心相对 strip 中心的 x 偏移
 ROW_Y = (-0.0125, 0.0125)  # 行中心 y（f=前排 -y，b=后排 +y）
@@ -78,10 +78,10 @@ def build_xml():
       <freejoint name="{seg_name(c, r)}_joint"/>
       <geom name="{seg_name(c, r)}_plate" type="box" size="{SEG_HX} {SEG_HY} {SEG_HZ}"
         friction="2 0.01 0.001" solref="0.004 1" rgba="0.82 0.83 0.87 1" mass="0.002"/>
-      <geom name="{seg_name(c, r)}_dome" type="ellipsoid" size="0.0075 0.0075 0.0042" pos="0 0 0.005"
-        contype="0" conaffinity="0" rgba="0.88 0.92 0.97 0.45" mass="0.0004"/>
-      <geom name="{seg_name(c, r)}_pill" type="cylinder" size="0.005 0.0016" pos="0 0 0.004"
-        contype="0" conaffinity="0" rgba="{color} 1" mass="0.0006"/>
+      <geom name="{seg_name(c, r)}_dome" type="ellipsoid" size="0.0075 0.0075 0.0042"
+        pos="0 0 {SEG_HZ + 0.002}" contype="0" conaffinity="0" rgba="0.88 0.92 0.97 0.45" mass="0.0004"/>
+      <geom name="{seg_name(c, r)}_pill" type="cylinder" size="0.005 0.0016"
+        pos="0 0 {SEG_HZ + 0.001}" contype="0" conaffinity="0" rgba="{color} 1" mass="0.0006"/>
     </body>""")
 
     # solref/solimp 硬化 + torquescale 放大，否则板会绕焊点像铰链一样下垂
