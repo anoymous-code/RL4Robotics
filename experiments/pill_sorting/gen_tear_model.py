@@ -1,23 +1,67 @@
-"""一次性生成撕剪版模型文件：
-- aloha_tear.xml：v3 起左夹爪不再固连药板（药板是场景中的自由体，需真实抓取）；
-- scene_tear.xml：include aloha_tear.xml 的场景包装。
+"""一次性生成移动分药工作站模型文件（v4 轮式底盘 + 双臂）：
+
+- aloha_tear.xml：双臂 + 载物台面 + 盒 A/盒 B 全部包进 mobile_base 车体，
+  底盘用平面三关节（x / y / yaw）+ 位置伺服近似差速底盘运动学；
+- scene_tear.xml：地面房间场景（去掉固定桌与铝型材框架，加房间道具）。
+
+运行：../../.venv/Scripts/python.exe gen_tear_model.py
 """
 
 from pathlib import Path
 
+import tear_scene as ts
+
 HERE = Path(__file__).resolve().parent
 
-# ---- aloha_tear.xml ----
+# ---- aloha_tear.xml：臂 + 车体 ----
 src = (HERE / "aloha_nokey.xml").read_text(encoding="utf-8")
+
+# 1) 移除 v1 遗留的固连药板
 start = src.index('<body name="pill_pack"')
 end = src.index('<site name="left/gripper"', start)
-out = src[:start] + src[end:]
-(HERE / "aloha_tear.xml").write_text(out, encoding="utf-8")
-print("aloha_tear.xml written,", len(out), "chars")
+src = src[:start] + src[end:]
 
-# ---- scene_tear.xml ----
+# 2) 双臂包进 mobile_base（几何来自 tear_scene.furniture_xml，与布局常量同源）
+base_open = f"""<body name="mobile_base" pos="0 0 0">
+      <joint name="base_x" type="slide" axis="1 0 0" range="-3 3" damping="10"/>
+      <joint name="base_y" type="slide" axis="0 1 0" range="-3 3" damping="10"/>
+      <joint name="base_yaw" type="hinge" axis="0 0 1" range="-3.2 3.2" damping="5"/>
+{ts.furniture_xml()}
+      """
+anchor = '<body name="left/base_link"'
+src = src.replace(anchor, base_open + anchor, 1)
+src = src.replace("</worldbody>", "    </body>\n  </worldbody>", 1)
+
+# 3) 底盘位置伺服执行器（近似差速底盘：脚本只命令 车头方向平移 + 原地转向）
+actuators = """
+  <actuator>
+    <position name="base_x" joint="base_x" ctrlrange="-3 3" kp="5000" kv="800"/>
+    <position name="base_y" joint="base_y" ctrlrange="-3 3" kp="5000" kv="800"/>
+    <position name="base_yaw" joint="base_yaw" ctrlrange="-3.2 3.2" kp="3000" kv="300"/>
+  </actuator>
+"""
+src = src.replace("</mujoco>", actuators + "</mujoco>", 1)
+(HERE / "aloha_tear.xml").write_text(src, encoding="utf-8")
+print("aloha_tear.xml written,", len(src), "chars")
+
+# ---- scene_tear.xml：房间场景（无固定桌，底盘在地面行驶）----
 src = (HERE / "scene_nokey.xml").read_text(encoding="utf-8")
-out = (src.replace("aloha_scene_nokey", "aloha_scene_tear")
-          .replace('<include file="aloha_nokey.xml"/>', '<include file="aloha_tear.xml"/>'))
-(HERE / "scene_tear.xml").write_text(out, encoding="utf-8")
+src = src.replace("aloha_scene_nokey", "aloha_scene_tear")
+src = src.replace('<include file="aloha_nokey.xml"/>', '<include file="aloha_tear.xml"/>')
+
+wb_start = src.index("<worldbody>") + len("<worldbody>")
+wb_end = src.index("</worldbody>")
+room = """
+    <light pos="0 0.1 2.5"/>
+    <light pos="-1.2 -0.6 2.2" diffuse="0.35 0.35 0.35"/>
+    <geom name="floor" size="3 3 0.05" type="plane" material="groundplane" pos="0 0 -.75"/>
+    <site name="worldref" pos="0 0 -0.75"/>
+    <!-- 房间道具：药柜、矮柜、充电桩 -->
+    <geom name="med_cabinet" type="box" size="0.25 0.18 0.45" pos="0.95 0.85 -0.30" rgba="0.55 0.45 0.35 1"/>
+    <geom type="box" size="0.22 0.02 0.12" pos="0.95 0.68 -0.28" rgba="0.65 0.56 0.45 1"/>
+    <geom name="side_table" type="box" size="0.30 0.20 0.25" pos="-1.25 0.85 -0.50" rgba="0.42 0.50 0.55 1"/>
+    <geom name="dock" type="box" size="0.04 0.28 0.18" pos="-2.02 -0.50 -0.57" rgba="0.20 0.55 0.38 1"/>
+  """
+src = src[:wb_start] + room + src[wb_end:]
+(HERE / "scene_tear.xml").write_text(src, encoding="utf-8")
 print("scene_tear.xml written")

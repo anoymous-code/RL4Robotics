@@ -1,18 +1,19 @@
-"""分药任务 v3：完整闭环流程。
+"""分药任务 v4：轮式移动分药工作站完整闭环流程。
 
-  盒 A（插板架）取板 → 双臂撕剪单格 → 单格入盒 B（药片盒）→ 剩板放回盒 A
+  驶离充电桩 → 停到工作位 → 盒 A 取板 → 双臂撕剪单格 → 入盒 B → 剩板放回盒 A
 
 流程：
-  1. 左臂移到盒 A 上方，张开夹爪竖直下降，夹住药板手柄（真实摩擦夹持）提出槽位；
+  0. 底盘从充电桩出发：原地转向 → 直线行驶 → 回正停稳（药板竖插盒 A 随车，纯接触无固定）；
+  1. 左臂移到盒 A 上方，张开夹爪竖直下降，夹住药板手柄提出槽位；
   2. 空中转体 90°，把板转到水平工作位（格朝上，自由端指向右臂）；
   3. 右臂从自由端夹住目标格外缘，扭腕撕断易撕线（可断裂焊接约束）；
   4. 撕下的单格（药片保持密封）运到盒 B 上方，指尖朝下松爪投放；
   5. 重复撕剪第二格；
-  6. 左臂把剩板转回竖直，插回盒 A 中间槽位，松爪complete。
+  6. 左臂把剩板转回竖直，插回盒 A 中间槽位，松爪撤离。
 
 运行:
     cd experiments/pill_sorting && ../../.venv/Scripts/python.exe run_full_demo.py
-    可选 --live 实时弹窗；--latch 抓稳后启用左爪锁定（默认纯摩擦夹持）
+    可选 --live 实时弹窗；--no-latch 左手纯摩擦对照
 """
 
 import argparse
@@ -105,6 +106,7 @@ class FullDemo:
     def reset(self):
         model, data = self.model, self.data
         mujoco.mj_resetData(model, data)
+        ts.set_base(model, data, ts.BASE_START)
         for side in ("left", "right"):
             for jname, q in zip(ARM_JOINTS, NEUTRAL_ARM):
                 data.qpos[model.joint(f"{side}/{jname}").qposadr[0]] = q
@@ -214,6 +216,55 @@ class FullDemo:
                     print(f"[t={self.t:6.2f}s] 易撕线 {w} 断裂（载荷 {load:.1f}）")
 
         return watch
+
+    # ---------- 阶段 0：驶离充电桩到工作位 ----------
+    def base_local_strip(self):
+        """药板中心在底盘系中的位置（监控行驶中板是否在槽里滑动）。"""
+        model, data = self.model, self.data
+        mujoco.mj_forward(model, data)
+        bx = data.qpos[model.joint("base_x").qposadr[0]]
+        by = data.qpos[model.joint("base_y").qposadr[0]]
+        yaw = data.qpos[model.joint("base_yaw").qposadr[0]]
+        c, s = np.cos(yaw), np.sin(yaw)
+        d = data.body("strip").xpos - np.array([bx, by, 0.0])
+        return np.array([c * d[0] + s * d[1], -s * d[0] + c * d[1], d[2]])
+
+    def drive_to_work(self):
+        """差速底盘式编排：原地转向 → 直线行驶 → 回正停稳。"""
+        model, data = self.model, self.data
+        acts = {n: model.actuator(n).id for n in ("base_x", "base_y", "base_yaw")}
+        start, work = ts.BASE_START, ts.BASE_WORK
+        delta = work[:2] - start[:2]
+        heading = np.arctan2(delta[1], delta[0])
+        p0 = self.base_local_strip()
+
+        def base_ctrl(x, y, yaw):
+            data.ctrl[acts["base_x"]] = x
+            data.ctrl[acts["base_y"]] = y
+            data.ctrl[acts["base_yaw"]] = yaw
+
+        # 原地转向车头对准目标
+        for k in range(int(1.6 * CTRL_HZ)):
+            s = minjerk((k + 1) / (1.6 * CTRL_HZ))
+            base_ctrl(start[0], start[1], start[2] + s * (heading - start[2]))
+            self.step_ctrl()
+        # 沿车头方向直线行驶（min-jerk 位置轨迹，加速度平缓避免药板在槽中晃出）
+        for k in range(int(4.5 * CTRL_HZ)):
+            s = minjerk((k + 1) / (4.5 * CTRL_HZ))
+            base_ctrl(start[0] + s * delta[0], start[1] + s * delta[1], heading)
+            self.step_ctrl()
+        # 原地回正到工作朝向
+        for k in range(int(1.6 * CTRL_HZ)):
+            s = minjerk((k + 1) / (1.6 * CTRL_HZ))
+            base_ctrl(work[0], work[1], heading + s * (work[2] - heading))
+            self.step_ctrl()
+        self.dwell(0.8)
+
+        drift = (self.base_local_strip() - p0) * 1000
+        bx = data.qpos[model.joint("base_x").qposadr[0]]
+        by = data.qpos[model.joint("base_y").qposadr[0]]
+        print(f"[t={self.t:6.2f}s] 底盘到达工作位 ({bx:.3f}, {by:.3f})，"
+              f"行驶中药板在槽内漂移 {np.round(drift, 1)} mm")
 
     # ---------- 阶段 1-2：盒 A 取板 → 工作位 ----------
     def pick_board(self):
@@ -409,7 +460,10 @@ class FullDemo:
     # ---------- 主流程 ----------
     def run(self):
         self.reset()
-        self.dwell(0.5)
+        self.cams.MAIN = "room"      # 行驶阶段用房间全景机位
+        self.dwell(0.6)
+        self.drive_to_work()
+        self.cams.MAIN = "follow_pack"
         self.pick_board()
         results = self.tear_segments()
         returned = self.return_board()
@@ -417,7 +471,7 @@ class FullDemo:
         n_ok = sum(ok for _, ok in results)
         print(f"总结: 撕剪入盒 B {n_ok}/{len(results)}，剩板放回盒 A {'成功' if returned else '失败'}")
 
-        out = VIDEO_DIR / "pill_full_v3_multicam.mp4"
+        out = VIDEO_DIR / "pill_full_v4_mobile_multicam.mp4"
         imageio.mimsave(out, self.frames, fps=FPS, macro_block_size=1)
         print(f"视频: {out}（{len(self.frames)} 帧, {len(self.frames)/FPS:.1f} s）")
         self.cams.close()
@@ -448,12 +502,12 @@ class FullDemo:
         ax.axhline(TEAR_LOAD, color="gray", ls=":", lw=1.2, label=f"断裂阈值 {TEAR_LOAD}")
         ax.set_xlabel("时间 (s)")
         ax.set_ylabel("易撕线约束载荷（efc 合力）")
-        ax.set_title("分药 v3（完整流程）：易撕线载荷曲线与断裂事件")
+        ax.set_title("分药 v4（移动工作站全流程）：易撕线载荷曲线与断裂事件")
         ax.legend(loc="upper left", fontsize=8, ncols=2)
         ax.grid(alpha=0.3)
         fig.tight_layout()
-        fig.savefig(IMAGE_DIR / "pill_full_v3_load.png")
-        print(f"载荷曲线: {IMAGE_DIR / 'pill_full_v3_load.png'}")
+        fig.savefig(IMAGE_DIR / "pill_full_v4_load.png")
+        print(f"载荷曲线: {IMAGE_DIR / 'pill_full_v4_load.png'}")
 
 
 if __name__ == "__main__":

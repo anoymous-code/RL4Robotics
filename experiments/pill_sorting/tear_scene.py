@@ -1,9 +1,11 @@
-"""分药 v3 场景：盒 A（插板架，内有多块铝塑板）→ 撕剪 → 盒 B（药片盒）。
+"""分药 v4 场景：轮式移动分药工作站（双臂 + 差速底盘近似）。
 
-- 药板 = 手柄条（strip，自由体）+ 8 格（2x4，自由体），以 12 条可断裂焊接约束（易撕线）相连；
-- 初始竖插在盒 A 中间槽位，手柄朝上，需左手真实抓取；
-- 盒 A 另两槽插有装饰板（静态几何），示意"一堆铝板"；
-- 盒 B 接收撕下的单格。
+- 双臂、载物台面、盒 A（插板架）、盒 B（药片盒）全部装在 mobile_base 车体上；
+- 底盘用平面三关节（世界系 x / y + 车体 yaw）+ 位置伺服近似差速底盘运动学，
+  轮-地接触不建模（轮子为纯视觉几何）；
+- 药板 = 手柄条（strip，自由体）+ 8 格（2x4，自由体），以 12 条可断裂焊接约束
+ （易撕线）相连，竖插在盒 A 中间槽位随车行驶（纯接触，无固定）；
+- 车从充电桩驶到房间中央工作位后，执行取板 → 撕剪 → 入盒 B → 放回盒 A。
 
 直接运行本文件可做几何/坐标探测并渲染静帧：
     ../../.venv/Scripts/python.exe tear_scene.py
@@ -30,7 +32,13 @@ BOARD_XMAX = COL_X0 + 3 * PITCH_X + SEG_HX     # 板自由端（局部 +x 边缘
 
 PILL_COLORS = ["0.95 0.45 0.35", "0.98 0.80 0.30", "0.40 0.75 0.55", "0.45 0.60 0.90"]
 
-# ---------- 盒 A（插板架）与盒 B（药片盒） ----------
+# ---------- 底盘 ----------
+# 车体局部系：台面顶面 z=0（与 v3 世界系一致），地面 z=-0.75；
+# 底盘三关节 base_x/base_y（世界系平移）+ base_yaw，位置伺服近似差速运动学
+BASE_START = np.array([-1.35, -0.50, 0.0])   # 充电桩旁出发位 (x, y, yaw)
+BASE_WORK = np.array([0.0, 0.0, 0.0])        # 工作位：局部系与世界系重合
+
+# ---------- 盒 A（插板架）与盒 B（药片盒），车体局部坐标 ----------
 BOX_A_CENTER = np.array([-0.22, -0.10, 0.0])
 SLOT_PITCH = 0.014          # 槽间距（x 向）；槽宽 = pitch - 隔板厚
 SLOT_WALL_T = 0.002         # 隔板半厚
@@ -78,13 +86,75 @@ def _quat_to_mat(quat):
     return m.reshape(3, 3)
 
 
+def furniture_xml():
+    """车载家具（mobile_base 车体局部坐标）：台面、车体、轮子、盒 A、装饰板、盒 B。
+
+    由 gen_tear_model.py 嵌入 aloha_tear.xml 的 mobile_base body 中。
+    """
+    parts = [
+        # 台面（顶面 z=0，与 v3 桌面同高，双臂底座与盒子都在其上）
+        '<geom name="cart_top" type="box" size="0.56 0.38 0.02" pos="0 0 -0.02" '
+        'mass="15" rgba="0.82 0.80 0.76 1"/>',
+        # 车体（纯视觉，底盘高度由无 z 自由度的平面关节保证）
+        '<geom name="cart_body" type="box" size="0.50 0.33 0.31" pos="0 0 -0.35" '
+        'contype="0" conaffinity="0" mass="45" rgba="0.25 0.27 0.30 1"/>',
+        '<geom type="box" size="0.505 0.335 0.03" pos="0 0 -0.10" '
+        'contype="0" conaffinity="0" mass="1" rgba="0.20 0.55 0.55 1"/>',
+    ]
+    for sx in (-1, 1):  # 四轮（纯视觉）
+        for sy in (-1, 1):
+            parts.append(f'<geom type="cylinder" size="0.09 0.032" '
+                         f'pos="{sx * 0.36} {sy * 0.30} -0.66" quat="0.7071 0.7071 0 0" '
+                         f'contype="0" conaffinity="0" mass="1.5" rgba="0.12 0.12 0.13 1"/>')
+
+    # 盒 A：3 槽插板架
+    ax, ay = BOX_A_CENTER[0], BOX_A_CENTER[1]
+    inner_hx = 1.5 * SLOT_PITCH + SLOT_WALL_T
+    parts.append(f'<geom name="boxa_bottom" type="box" size="{inner_hx + 0.006} {BOX_A_HY + 0.006} 0.003" '
+                 f'pos="{ax} {ay} 0.003" rgba="0.55 0.42 0.30 1"/>')
+    for sx in (-1, 1):
+        parts.append(f'<geom type="box" size="0.003 {BOX_A_HY + 0.006} {BOX_A_WALL_H}" '
+                     f'pos="{ax + sx * (inner_hx + 0.003):.4f} {ay} {BOX_A_WALL_H}" rgba="0.55 0.42 0.30 0.7"/>')
+    for sy in (-1, 1):
+        parts.append(f'<geom type="box" size="{inner_hx + 0.006} 0.003 {BOX_A_WALL_H}" '
+                     f'pos="{ax} {ay + sy * (BOX_A_HY + 0.003):.4f} {BOX_A_WALL_H}" rgba="0.55 0.42 0.30 0.7"/>')
+    for k in (-1, 1):
+        parts.append(f'<geom type="box" size="{SLOT_WALL_T} {BOX_A_HY} 0.045" '
+                     f'pos="{ax + k * SLOT_PITCH / 2:.4f} {ay} {0.006 + 0.045}" rgba="0.60 0.48 0.35 0.9"/>')
+    # 两块装饰板（静态），比目标板矮，避免左手指下降抓取时磕碰
+    for k, h in ((-1, 0.042), (1, 0.038)):
+        px = ax + k * SLOT_PITCH
+        parts.append(f'<geom type="box" size="0.0012 0.026 {h}" '
+                     f'pos="{px:.4f} {ay} {BOX_A_FLOOR_TOP + h + 0.001:.4f}" rgba="0.78 0.79 0.84 1"/>')
+        parts.append(f'<geom type="box" size="0.002 0.011 0.006" '
+                     f'pos="{px:.4f} {ay} {BOX_A_FLOOR_TOP + 2 * h - 0.004:.4f}" '
+                     f'contype="0" conaffinity="0" rgba="0.3 0.35 0.45 1"/>')
+
+    # 盒 B：药片盒
+    bx, by = BOX_B_CENTER[0], BOX_B_CENTER[1]
+    parts.append(f'<geom name="boxb_bottom" type="box" size="{BOX_B_HX} {BOX_B_HY} 0.0015" '
+                 f'pos="{bx} {by} 0.0015" rgba="0.30 0.55 0.75 1"/>')
+    for sx, sy, hx, hy in ((1, 0, 0.003, BOX_B_HY), (-1, 0, 0.003, BOX_B_HY),
+                           (0, 1, BOX_B_HX, 0.003), (0, -1, BOX_B_HX, 0.003)):
+        px = bx + sx * (BOX_B_HX + 0.003)
+        py = by + sy * (BOX_B_HY + 0.003)
+        parts.append(f'<geom type="box" size="{hx} {hy} {BOX_B_WALL_H}" '
+                     f'pos="{px:.4f} {py:.4f} {BOX_B_WALL_H}" rgba="0.30 0.55 0.75 0.5"/>')
+
+    return "\n".join("      " + p for p in parts)
+
+
 def build_xml():
-    """生成完整场景 XML 字符串。板初始竖插在盒 A 中间槽（焊接 relpose 取 qpos0）。"""
+    """生成完整场景 XML 字符串。
+
+    药板初始竖插在"位于出发点的车"上的盒 A 中间槽（焊接 relpose 取 qpos0，
+    整板任意全局位姿不影响格间刚性布局）。
+    """
     R0 = _quat_to_mat(BOARD_UP_QUAT)
     quat_str = " ".join(f"{q:.7f}" for q in BOARD_UP_QUAT)
 
-    # 药板：strip 自由体
-    strip_p = BOARD_HOME
+    # 药板：strip 自由体，初始在出发点的车上
+    strip_p = BOARD_HOME + np.array([BASE_START[0], BASE_START[1], 0.0])
     bodies = [f"""
     <body name="strip" pos="{strip_p[0]:.6f} {strip_p[1]:.6f} {strip_p[2]:.6f}" quat="{quat_str}">
       <freejoint name="strip_joint"/>
@@ -128,41 +198,6 @@ def build_xml():
     welds.append(f'    <weld name="grasp_latch" body1="left/gripper_link" body2="strip" '
                  f'active="false" relpose="0 0 0.19 1 0 0 0" {W}/>')
 
-    # 盒 A：3 槽插板架
-    ax, ay = BOX_A_CENTER[0], BOX_A_CENTER[1]
-    inner_hx = 1.5 * SLOT_PITCH + SLOT_WALL_T
-    boxa = [f'    <geom name="boxa_bottom" type="box" size="{inner_hx + 0.006} {BOX_A_HY + 0.006} 0.003" '
-            f'pos="{ax} {ay} 0.003" rgba="0.55 0.42 0.30 1"/>']
-    for sx in (-1, 1):  # x 向外壁
-        boxa.append(f'    <geom type="box" size="0.003 {BOX_A_HY + 0.006} {BOX_A_WALL_H}" '
-                    f'pos="{ax + sx * (inner_hx + 0.003):.4f} {ay} {BOX_A_WALL_H}" rgba="0.55 0.42 0.30 0.7"/>')
-    for sy in (-1, 1):  # y 向外壁
-        boxa.append(f'    <geom type="box" size="{inner_hx + 0.006} 0.003 {BOX_A_WALL_H}" '
-                    f'pos="{ax} {ay + sy * (BOX_A_HY + 0.003):.4f} {BOX_A_WALL_H}" rgba="0.55 0.42 0.30 0.7"/>')
-    for k in (-1, 1):   # 两块内隔板 → 3 槽
-        boxa.append(f'    <geom type="box" size="{SLOT_WALL_T} {BOX_A_HY} 0.045" '
-                    f'pos="{ax + k * SLOT_PITCH / 2:.4f} {ay} {0.006 + 0.045}" rgba="0.60 0.48 0.35 0.9"/>')
-    # 两块装饰板（静态），插在边槽；比目标板矮，避免左手指下降抓取时磕碰
-    for k, h in ((-1, 0.042), (1, 0.038)):
-        px = ax + k * SLOT_PITCH
-        boxa.append(f'    <geom type="box" size="0.0012 0.026 {h}" '
-                    f'pos="{px:.4f} {ay} {BOX_A_FLOOR_TOP + h + 0.001:.4f}" '
-                    f'rgba="0.78 0.79 0.84 1"/>')
-        boxa.append(f'    <geom type="box" size="0.002 0.011 0.006" '
-                    f'pos="{px:.4f} {ay} {BOX_A_FLOOR_TOP + 2 * h - 0.004:.4f}" '
-                    f'contype="0" conaffinity="0" rgba="0.3 0.35 0.45 1"/>')
-
-    # 盒 B：药片盒
-    bx, by = BOX_B_CENTER[0], BOX_B_CENTER[1]
-    boxb = [f'    <geom name="boxb_bottom" type="box" size="{BOX_B_HX} {BOX_B_HY} 0.0015" '
-            f'pos="{bx} {by} 0.0015" rgba="0.30 0.55 0.75 1"/>']
-    for sx, sy, hx, hy in ((1, 0, 0.003, BOX_B_HY), (-1, 0, 0.003, BOX_B_HY),
-                           (0, 1, BOX_B_HX, 0.003), (0, -1, BOX_B_HX, 0.003)):
-        px = bx + sx * (BOX_B_HX + 0.003)
-        py = by + sy * (BOX_B_HY + 0.003)
-        boxb.append(f'    <geom type="box" size="{hx} {hy} {BOX_B_WALL_H}" '
-                    f'pos="{px:.4f} {py:.4f} {BOX_B_WALL_H}" rgba="0.30 0.55 0.75 0.5"/>')
-
     return f"""
 <mujoco model="aloha_pill_full">
   <include file="{(HERE / 'scene_tear.xml').as_posix()}"/>
@@ -176,9 +211,8 @@ def build_xml():
   <worldbody>
     <camera name="follow_pack" mode="targetbody" target="strip" pos="0.42 -0.40 0.38"/>
     <camera name="side" pos="-0.60 -0.28 0.34" xyaxes="0.5165 -0.8563 0.0000 0.2453 0.1480 0.9581"/>
+    <camera name="room" mode="targetbody" target="mobile_base" pos="1.30 -1.55 0.85"/>
 {''.join(bodies)}
-{chr(10).join(boxa)}
-{chr(10).join(boxb)}
   </worldbody>
 
   <equality>
@@ -243,6 +277,13 @@ def release_latch(model, data):
     data.eq_active[model.equality("grasp_latch").id] = 0
 
 
+def set_base(model, data, xyyaw):
+    """设置底盘三关节的 qpos 与 ctrl。"""
+    for jname, v in zip(("base_x", "base_y", "base_yaw"), xyyaw):
+        data.qpos[model.joint(jname).qposadr[0]] = v
+        data.ctrl[model.actuator(jname).id] = v
+
+
 if __name__ == "__main__":
     import imageio.v2 as imageio
 
@@ -253,25 +294,27 @@ if __name__ == "__main__":
     data = mujoco.MjData(model)
     print(f"模型编译成功: nq={model.nq}, nbody={model.nbody}, neq={model.neq}")
 
+    set_base(model, data, BASE_START)
     for side in ("left", "right"):
         for jname, q in zip(ARM_JOINTS, NEUTRAL_ARM):
             data.qpos[model.joint(f"{side}/{jname}").qposadr[0]] = q
             data.ctrl[model.actuator(f"{side}/{jname}").id] = q
     mujoco.mj_forward(model, data)
 
-    # 沉降：板在槽中落座后应保持竖立
+    # 沉降：板在槽中落座后应保持竖立、随车不动
     for _ in range(1500):
         mujoco.mj_step(model, data)
     s = data.body("strip")
     Rz = s.xmat.reshape(3, 3)
-    print(f"沉降后 strip 位置: {np.round(s.xpos, 4)}（初始 {np.round(BOARD_HOME, 4)}）")
+    home_w = BOARD_HOME + np.array([BASE_START[0], BASE_START[1], 0.0])
+    print(f"沉降后 strip 位置: {np.round(s.xpos, 4)}（初始 {np.round(home_w, 4)}）")
     print(f"沉降后板局部 x 轴（应≈[0,0,-1]）: {np.round(Rz[:, 0], 3)}")
-    print(f"tab 顶部世界位置: {np.round(data.site('strip_tab_top').xpos, 4)}")
+    print(f"底盘位置: {np.round([data.qpos[model.joint('base_x').qposadr[0]], data.qpos[model.joint('base_y').qposadr[0]]], 4)}")
     print(f"w_strip_f 静载: {weld_load(model, data, 'w_strip_f'):.3f}")
 
     renderer = mujoco.Renderer(model, height=720, width=1280)
     (HERE / "debug").mkdir(exist_ok=True)
-    for cam in ("follow_pack", "side"):
+    for cam in ("room", "follow_pack"):
         renderer.update_scene(data, camera=cam)
         imageio.imwrite(HERE / "debug" / f"full_probe_{cam}.png", renderer.render())
     renderer.close()

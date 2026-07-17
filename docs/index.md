@@ -72,13 +72,13 @@ graph LR
 
 <div class="stat-grid" markdown>
 <div class="stat-card" markdown><span class="num">0</span><span class="label">当前阶段 / 共 7 阶段</span></div>
-<div class="stat-card" markdown><span class="num">4</span><span class="label">学习日志篇数</span></div>
-<div class="stat-card" markdown><span class="num">6</span><span class="label">完成的仿真实验</span></div>
-<div class="stat-card" markdown><span class="num">2/2+回收</span><span class="label">分药 v3 全流程成功</span></div>
+<div class="stat-card" markdown><span class="num">5</span><span class="label">学习日志篇数</span></div>
+<div class="stat-card" markdown><span class="num">7</span><span class="label">完成的仿真实验</span></div>
+<div class="stat-card" markdown><span class="num">2/2+回收</span><span class="label">分药 v4 移动全流程成功</span></div>
 </div>
 
-!!! success "最新进展 · 2026-07-17"
-    **分药 v3 全闭环达成**：药板竖插在装有多块铝塑板的盒 A 插板架中，左手真实抓取提出、空中转体，双臂撕剪两格投入盒 B（2/2），剩板插回盒 A 原槽位，53 秒全流程一气呵成。[看全流程演示 →](journal/2026-07-17-full.md)
+!!! success "最新进展 · 2026-07-18"
+    **分药 v4 轮式移动工作站达成**：平台对齐"双臂 + 轮式底盘"愿景——双臂与盒 A/B 装上差速底盘，机器人驶离充电桩、停到工作位后完成取板、撕剪入盒 B（2/2）、剩板回槽全流程 62 秒；行驶中无固定的药板在槽内仅漂移 0.1 mm。[看移动全流程演示 →](journal/2026-07-18-mobile.md)
 
 !!! tip "如何使用这个网站"
     - **[学习路线图](roadmap.md)**：整个项目的地图，随时回来看看我们走到哪了。
