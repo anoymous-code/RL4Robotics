@@ -122,6 +122,10 @@ class TearRefineEnv(gym.Env):
                                 ArmKinematics(model, "right", "right/gripper"))
         return self._cache[idx]
 
+    def _peek_model(self, idx):
+        """取某池条目的已缓存模型（渲染器需在 reset 前按模型创建）。"""
+        return self._get_model(idx)[0]
+
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
         if seed is not None:
