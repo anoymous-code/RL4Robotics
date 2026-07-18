@@ -6,6 +6,11 @@
 
 <div class="timeline" markdown>
 <div class="tl-item" markdown>
+<span class="tl-date">2026-07-18 (晚)</span>
+
+**[ACT 训练启动：数据工厂满负荷运转](2026-07-18-act.md)** — 后台自动采集 200 条演示（前 62 条全成功），实现 ACT-lite（ResNet18 + Transformer + 动作分块，~200 行）与预注册评测协议（对照组 = 错误标定的脚本专家），数据样例三机位视频入库；采集 → 训练接力任务运行中。
+</div>
+<div class="tl-item" markdown>
 <span class="tl-date">2026-07-18 (下)</span>
 
 **[学习管线开工：Gym 环境 + 域随机化 + 专家数据自动采集](2026-07-18-pipeline.md)** — 场景参数化（盒位/停车位姿/目标格随机）、机载三相机观测（对齐真机配置）、脚本专家改造成数据生成器：**随机场景 10/10 成功**，自动产出 ACT 格式演示数据，模仿学习训练的地基就绪。

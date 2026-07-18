@@ -76,10 +76,11 @@ class DemoRecorder:
         self.renderer.close()
 
 
-def collect(n_episodes, seed=0, rand_level=1.0, verbose=False):
+def collect(n_episodes, seed=0, rand_level=1.0, verbose=False, start=0):
     rng = np.random.default_rng(seed)
     results = []
-    for ep in range(n_episodes):
+    for k in range(n_episodes):
+        ep = start + k
         cfg = ts.sample_cfg(rng, rand_level)
         t0 = time.time()
         demo = FullDemo(cfg=cfg, skip_drive=True, targets=[tuple(cfg.target_seg)],
@@ -116,6 +117,8 @@ if __name__ == "__main__":
     parser.add_argument("--n", type=int, default=10, help="episode 数")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--rand", type=float, default=1.0, help="域随机化幅度 0~1")
+    parser.add_argument("--start", type=int, default=0, help="起始编号（续采时避免覆盖）")
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
-    collect(args.n, seed=args.seed, rand_level=args.rand, verbose=args.verbose)
+    collect(args.n, seed=args.seed, rand_level=args.rand, verbose=args.verbose,
+            start=args.start)
