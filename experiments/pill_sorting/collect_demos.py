@@ -76,7 +76,8 @@ class DemoRecorder:
         self.renderer.close()
 
 
-def collect(n_episodes, seed=0, rand_level=1.0, verbose=False, start=0):
+def collect(n_episodes, seed=0, rand_level=1.0, verbose=False, start=0,
+            action_noise=0.004):
     rng = np.random.default_rng(seed)
     results = []
     for k in range(n_episodes):
@@ -84,7 +85,7 @@ def collect(n_episodes, seed=0, rand_level=1.0, verbose=False, start=0):
         cfg = ts.sample_cfg(rng, rand_level)
         t0 = time.time()
         demo = FullDemo(cfg=cfg, skip_drive=True, targets=[tuple(cfg.target_seg)],
-                        make_video=False, verbose=verbose)
+                        make_video=False, verbose=verbose, action_noise=action_noise)
         recorder = DemoRecorder(demo.model)
         demo.recorder = recorder
         try:

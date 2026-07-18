@@ -44,12 +44,14 @@ class DemoDataset(Dataset):
     def __init__(self, files):
         self.files = files
         self.index = []
+        self.target_row = []
         qpos_all, act_all = [], []
         for fi, path in enumerate(files):
             with h5py.File(path, "r") as f:
                 n = f["observations/qpos"].shape[0]
                 qpos_all.append(f["observations/qpos"][:])
                 act_all.append(f["action"][:])
+                self.target_row.append(int(json.loads(f.attrs["cfg"])["target_seg"][1]))
             self.index += [(fi, t) for t in range(n)]
         qpos_all = np.concatenate(qpos_all)
         act_all = np.concatenate(act_all)
@@ -87,7 +89,7 @@ class DemoDataset(Dataset):
             mask[len(act) - pad:] = 0.0
         act = (act - self.stats["act_mean"]) / self.stats["act_std"]
         return (imgs.astype(np.float32), qpos.astype(np.float32),
-                act.astype(np.float32), mask)
+                act.astype(np.float32), mask, self.target_row[fi])
 
 
 # ---------------- 模型 ----------------
@@ -100,8 +102,11 @@ class ACTLite(nn.Module):
         self.backbone = nn.Sequential(*list(bb.children())[:-2])   # → (512, H/32, W/32)
         self.proj = nn.Conv2d(512, d, 1)
         self.qpos_in = nn.Linear(14, d)
+        # 任务条件 token：目标格行号（f/b）。观测中目标不可见（板完整对称），
+        # 没有它策略会输出两类演示的平均动作
+        self.target_emb = nn.Embedding(2, d)
         n_img_tokens = n_cams * 8 * 10                             # 240x320 → 8x10
-        self.pos_emb = nn.Parameter(torch.randn(1, n_img_tokens + 1 + chunk, d) * 0.02)
+        self.pos_emb = nn.Parameter(torch.randn(1, n_img_tokens + 2 + chunk, d) * 0.02)
         self.queries = nn.Parameter(torch.randn(1, chunk, d) * 0.02)
         layer = nn.TransformerEncoderLayer(d, nhead=8, dim_feedforward=1024,
                                            batch_first=True, norm_first=True)
@@ -109,12 +114,13 @@ class ACTLite(nn.Module):
         self.head = nn.Linear(d, act_dim)
         self.chunk = chunk
 
-    def forward(self, imgs, qpos):
+    def forward(self, imgs, qpos, target_row):
         B, N, C, H, W = imgs.shape
         feat = self.proj(self.backbone(imgs.reshape(B * N, C, H, W)))
         feat = feat.flatten(2).transpose(1, 2).reshape(B, -1, D_MODEL)   # (B, N*80, d)
         q_tok = self.qpos_in(qpos).unsqueeze(1)
-        x = torch.cat([feat, q_tok, self.queries.expand(B, -1, -1)], dim=1)
+        t_tok = self.target_emb(target_row).unsqueeze(1)
+        x = torch.cat([feat, q_tok, t_tok, self.queries.expand(B, -1, -1)], dim=1)
         x = self.encoder(x + self.pos_emb)
         return self.head(x[:, -self.chunk:])
 
@@ -128,8 +134,10 @@ def train(steps, batch, lr=1e-4, out_tag="act", max_files=None):
     print(f"扫描 {len(files)} 个数据文件...", flush=True)
     ds = DemoDataset(files)
     print(f"数据: {len(files)} 条演示, {len(ds)} 个训练样本")
-    loader = DataLoader(ds, batch_size=batch, shuffle=True, num_workers=4,
-                        pin_memory=True, persistent_workers=True, drop_last=True)
+    # num_workers=0：Windows 下 spawn worker 会各自加载 CUDA DLL，
+    # 提交内存 ×N 直接触发页面文件不足（WinError 1455）
+    loader = DataLoader(ds, batch_size=batch, shuffle=True, num_workers=0,
+                        pin_memory=True, drop_last=True)
     dev = "cuda" if torch.cuda.is_available() else "cpu"
     model = ACTLite().to(dev)
     opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
@@ -140,11 +148,16 @@ def train(steps, batch, lr=1e-4, out_tag="act", max_files=None):
     step, t0, running = 0, time.time(), 0.0
     model.train()
     while step < steps:
-        for imgs, qpos, act, mask in loader:
+        for imgs, qpos, act, mask, tgt in loader:
             imgs, qpos = imgs.to(dev, non_blocking=True), qpos.to(dev, non_blocking=True)
             act, mask = act.to(dev, non_blocking=True), mask.to(dev, non_blocking=True)
+            tgt = tgt.to(dev, non_blocking=True)
+            # 传感器 dropout：随机抹掉整组图像（置均值），逼模型利用 qpos 辅助
+            # 区分轨迹相位（不同阶段的画面可能相似，纯图像会相位混淆）
+            drop = (torch.rand(imgs.shape[0], device=dev) < 0.2).view(-1, 1, 1, 1, 1)
+            imgs = imgs * (~drop)
             with torch.autocast(dev, dtype=torch.bfloat16):
-                pred = model(imgs, qpos)
+                pred = model(imgs, qpos, tgt)
                 loss = (torch.abs(pred - act).mean(-1) * mask).sum() / mask.sum()
             opt.zero_grad(set_to_none=True)
             scaler.scale(loss).backward()

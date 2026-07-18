@@ -77,8 +77,8 @@ graph LR
 <div class="stat-card" markdown><span class="num">10/10</span><span class="label">专家随机场景成功率</span></div>
 </div>
 
-!!! success "最新进展 · 2026-07-18"
-    **ACT 训练启动**：后台自动采集 200 条随机场景演示（零人力），ACT-lite 模型（ResNet18 + Transformer 动作分块）与预注册评测协议就绪，采集 → 训练接力任务运行中。[看训练日志 →](journal/2026-07-18-act.md)
+!!! warning "最新进展 · 2026-07-18 深夜"
+    **第一次策略评测 0/20，完成三层失败解剖**：任务信息缺失、环境物理残缺（重放实验揪出）、相位混淆（BC 复合误差 + 因果混淆的活教材）。修复 + DART 带噪专家重采 + 传感器 dropout，流水线 v2 运行中。[看破案日志 →](journal/2026-07-18-debug.md)
 
 !!! tip "如何使用这个网站"
     - **[学习路线图](roadmap.md)**：整个项目的地图，随时回来看看我们走到哪了。

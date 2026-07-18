@@ -9,12 +9,14 @@
 """
 
 import argparse
+import io
 from pathlib import Path
 
 import imageio.v2 as imageio
 import mujoco
 import numpy as np
 import torch
+from PIL import Image
 
 import tear_scene as ts
 from pill_env import CAMS, PillTearEnv
@@ -22,8 +24,17 @@ from train_act import CHUNK, IMG_MEAN, IMG_STD, ACTLite
 
 HERE = Path(__file__).resolve().parent
 VIDEO_DIR = HERE.parents[1] / "docs" / "assets" / "videos"
-EXEC_STEPS = 25          # 每个动作块开环执行的步数
+EXEC_STEPS = 50          # 整块开环执行：演示首段有静止 dwell，短执行段会让
+                         # "图像推断相位"死锁在静止区（详见 rollout 文档字符串）
 EPISODE_SECS = 55
+ENSEMBLE_M = 0.1         # 时间集成指数权重系数（ACT 论文）
+
+
+def jpeg_roundtrip(img, quality=60):
+    """训练数据是 JPEG(60) 压缩帧，推理观测也过一遍编解码对齐分布。"""
+    buf = io.BytesIO()
+    Image.fromarray(img).save(buf, format="jpeg", quality=quality)
+    return np.asarray(Image.open(buf))
 
 
 class ActPolicy:
@@ -36,28 +47,35 @@ class ActPolicy:
         print(f"载入 {ckpt_path}（训练步数 {ckpt.get('step')}）")
 
     @torch.no_grad()
-    def predict_chunk(self, obs):
+    def predict_chunk(self, obs, target_row=0):
         imgs = np.stack([
-            ((obs[cam].astype(np.float32) / 255.0) - IMG_MEAN) / IMG_STD
+            ((jpeg_roundtrip(obs[cam]).astype(np.float32) / 255.0) - IMG_MEAN) / IMG_STD
             for cam in CAMS]).transpose(0, 3, 1, 2)
         qpos = (obs["qpos"].astype(np.float32) - self.stats["qpos_mean"]) / self.stats["qpos_std"]
         imgs_t = torch.from_numpy(imgs).unsqueeze(0).to(self.device)
         qpos_t = torch.from_numpy(qpos).unsqueeze(0).to(self.device)
+        tgt_t = torch.tensor([target_row], device=self.device)
         with torch.autocast(self.device, dtype=torch.bfloat16):
-            chunk = self.model(imgs_t, qpos_t)[0].float().cpu().numpy()
+            chunk = self.model(imgs_t, qpos_t, tgt_t)[0].float().cpu().numpy()
         return chunk * self.stats["act_std"] + self.stats["act_mean"]
 
 
 def rollout(env, policy, video_path=None, seed=None):
+    """动作块开环执行 rollout：一次推理执行前 EXEC_STEPS 步再重推理。
+
+    注意不用"每步重推理 + 时间集成"：本策略实测忽略 qpos（图像与 qpos 在
+    演示中完全冗余，模型走了图像捷径），每步重推理时图像几乎不变 →
+    预测停在轨迹同一相位 → 机器人原地冻结。开环执行块内自洽的轨迹段
+    可以实质推进，新图像随之明显变化，相位得以校准。"""
     obs, info = env.reset(seed=seed)
+    target_row = int(info["cfg"].target_seg[1])
     writer = None
     if video_path:
         writer = imageio.get_writer(video_path, fps=25, macro_block_size=1)
-    steps, done = 0, False
     max_steps = int(EPISODE_SECS * 50)
-    last_info = {}
+    last_info, steps, done = {}, 0, False
     while steps < max_steps and not done:
-        chunk = policy.predict_chunk(obs)
+        chunk = policy.predict_chunk(obs, target_row)
         for k in range(min(EXEC_STEPS, CHUNK)):
             obs, reward, terminated, truncated, last_info = env.step(chunk[k])
             steps += 1

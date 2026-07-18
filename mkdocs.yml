@@ -98,6 +98,7 @@ nav:
       - 选型初探: hardware/index.md
   - 学习日志:
       - 日志索引: journal/index.md
+      - "2026-07-18 (深夜) · 0/20 失败解剖": journal/2026-07-18-debug.md
       - "2026-07-18 (晚) · ACT 训练启动": journal/2026-07-18-act.md
       - "2026-07-18 (下) · 学习管线开工": journal/2026-07-18-pipeline.md
       - "2026-07-18 · 移动机器人分药 v5": journal/2026-07-18-mobile.md

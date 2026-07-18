@@ -28,6 +28,8 @@ CTRL_HZ = 50
 IMG_H, IMG_W = 240, 320
 CAMS = ("head_cam", "wrist_cam_left", "wrist_cam_right")
 GRIP_OPEN = 0.025
+TEAR_LOAD = 4.5    # 易撕线断裂载荷阈值（与脚本专家一致）
+TEAR_HOLD = 3      # 断裂需持续超阈值的控制周期数（滤掉夹持瞬间冲击）
 
 
 def actuator_ids14(model):
@@ -112,14 +114,89 @@ class PillTearEnv(gym.Env):
             data.qpos[model.joint(f"{side}/right_finger").qposadr[0]] = 0.0084
             data.ctrl[model.actuator(f"{side}/gripper").id] = GRIP_OPEN
         mujoco.mj_forward(model, data)
+        # 可断裂易撕线 = 仅目标格相邻的焊线（与采集演示时的物理一致：
+        # 专家只在撕剪目标格时监控断裂；非目标焊线视为不可断）
+        self._welds = [model.equality(w).id
+                       for w in ts.weld_names_of(*self.cfg.target_seg)]
+        self._aws = set(self._welds)
+        self._over_cnt = {}
+        self._latched = False
+        self._tab_geom = model.geom("strip_tab").id
+        self._seg_geom = model.geom(f"{ts.seg_name(*self.cfg.target_seg)}_plate").id
+        self._lfinger_bodies = {model.body("left/left_finger_link").id,
+                                model.body("left/right_finger_link").id}
+        self._rfinger_bodies = {model.body("right/left_finger_link").id,
+                                model.body("right/right_finger_link").id}
+        self._lgrip_act = model.actuator("left/gripper").id
         for _ in range(int(0.5 * CTRL_HZ) * self.n_sub):   # 沉降
             mujoco.mj_step(model, data)
         return self._obs(), {"cfg": self.cfg}
+
+    def _check_grasp_latch(self):
+        """左爪锁定作为环境物理（sticky gripper）：闭爪且两指触到手柄 → 锁定；
+        张爪 → 解除。与采集演示时脚本专家的 latch 行为一致。"""
+        model, data = self.model, self.data
+        grip_cmd = data.ctrl[self._lgrip_act]
+        if not self._latched:
+            if grip_cmd < 0.008:
+                ncon = sum(1 for i in range(data.ncon)
+                           if (data.contact[i].geom1 == self._tab_geom
+                               and model.geom_bodyid[data.contact[i].geom2] in self._lfinger_bodies)
+                           or (data.contact[i].geom2 == self._tab_geom
+                               and model.geom_bodyid[data.contact[i].geom1] in self._lfinger_bodies))
+                if ncon >= 2:
+                    ts.engage_latch(model, data)
+                    self._latched = True
+        elif grip_cmd > 0.015:
+            ts.release_latch(model, data)
+            self._latched = False
+
+    def _seg_gripped(self):
+        """右手指是否夹触目标格板缘。"""
+        model, data = self.model, self.data
+        for i in range(data.ncon):
+            g1, g2 = data.contact[i].geom1, data.contact[i].geom2
+            if ((g1 == self._seg_geom and model.geom_bodyid[g2] in self._rfinger_bodies)
+                    or (g2 == self._seg_geom and model.geom_bodyid[g1] in self._rfinger_bodies)):
+                return True
+        return False
+
+    def _check_tears(self):
+        """易撕线断裂：仅当右爪夹住目标格且载荷连续 TEAR_HOLD 步超阈值。
+
+        纯惯性冲击（提板/转体加速度尖峰）不会沿易撕线撕开——撕裂需要
+        "边界受夹 + 持续弯折"。这也与采集演示时专家仅在撕剪阶段判定
+        断裂的物理规则一致。"""
+        data = self.data
+        if not self._active_weld_set or not self._seg_gripped():
+            self._over_cnt = {}
+            return
+        loads = {e: 0.0 for e in self._active_weld_set}
+        for i in range(data.nefc):
+            if data.efc_type[i] == mujoco.mjtConstraint.mjCNSTR_EQUALITY:
+                e = data.efc_id[i]
+                if e in loads:
+                    loads[e] += abs(data.efc_force[i])
+        for e, load in loads.items():
+            if load >= TEAR_LOAD:
+                self._over_cnt[e] = self._over_cnt.get(e, 0) + 1
+                if self._over_cnt[e] >= TEAR_HOLD:
+                    self.model.eq_active0[e] = 0
+                    data.eq_active[e] = 0
+                    self._active_weld_set.discard(e)
+            else:
+                self._over_cnt[e] = 0
+
+    @property
+    def _active_weld_set(self):
+        return self._aws
 
     def step(self, action):
         self.data.ctrl[self.act_ids] = np.asarray(action, dtype=np.float64)
         for _ in range(self.n_sub):
             mujoco.mj_step(self.model, self.data)
+        self._check_tears()
+        self._check_grasp_latch()
         self._step_count += 1
         seg_ok, board_ok = self._success()
         # 板初始就在槽中，"回槽"只有在目标格已入盒 B 后才有意义

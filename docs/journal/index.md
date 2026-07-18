@@ -6,6 +6,11 @@
 
 <div class="timeline" markdown>
 <div class="tl-item" markdown>
+<span class="tl-date">2026-07-18 (深夜)</span>
+
+**[0/20 之后：模仿学习失败的三层解剖](2026-07-18-debug.md)** — 训练损失漂亮但评测全灭。逐层破案：任务信息缺失（目标格不可见 → 平均动作）、环境物理残缺（抓取锁定/撕裂规则住在专家里，重放实验揪出）、相位混淆（首尾同像 + qpos 通路萎缩 → 开场即"收尾"死锁）。对策：任务 token、规则入环境、DART 带噪专家 + 传感器 dropout，流水线 v2 运行中。
+</div>
+<div class="tl-item" markdown>
 <span class="tl-date">2026-07-18 (晚)</span>
 
 **[ACT 训练启动：数据工厂满负荷运转](2026-07-18-act.md)** — 后台自动采集 200 条演示（前 62 条全成功），实现 ACT-lite（ResNet18 + Transformer + 动作分块，~200 行）与预注册评测协议（对照组 = 错误标定的脚本专家），数据样例三机位视频入库；采集 → 训练接力任务运行中。

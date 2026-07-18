@@ -81,13 +81,18 @@ class FullDemo:
     """
 
     def __init__(self, live=False, latch=True, cfg=None, skip_drive=False,
-                 targets=None, recorder=None, make_video=True, verbose=True):
+                 targets=None, recorder=None, make_video=True, verbose=True,
+                 action_noise=0.0):
         self.cfg = cfg or ts.SceneCfg()
         self.latch = latch
         self.skip_drive = skip_drive
         self.targets = list(targets) if targets is not None else [(3, 0), (3, 1)]
         self.recorder = recorder
         self.verbose = verbose
+        # DART 式噪声注入：执行 = 干净目标 + OU 噪声，录制标签 = 干净目标。
+        # 让演示覆盖轨迹管道邻域、教会策略纠正偏差（对抗 BC 复合误差）
+        self.action_noise = action_noise
+        self._ou = np.zeros(12)
         self.model = ts.load_model(self.cfg)
         stiffen_arm(self.model, "left", LEFT_KP_SCALE)
         stiffen_arm(self.model, "right", RIGHT_KP_SCALE)
@@ -144,9 +149,19 @@ class FullDemo:
 
     def step_ctrl(self, watch=None):
         if self.recorder is not None:
-            self.recorder.tick(self.model, self.data)   # 步进前记录 (观测, 动作=当前 ctrl)
-        for _ in range(self.n_sub):
-            mujoco.mj_step(self.model, self.data)
+            self.recorder.tick(self.model, self.data)   # 步进前记录 (观测, 动作=干净 ctrl)
+        if self.action_noise > 0:
+            ids = [self.model.actuator(f"{s}/{j}").id
+                   for s in ("left", "right") for j in ARM_JOINTS]
+            self._ou = 0.95 * self._ou + np.random.normal(0, self.action_noise, 12)
+            saved = self.data.ctrl[ids].copy()
+            self.data.ctrl[ids] = saved + self._ou
+            for _ in range(self.n_sub):
+                mujoco.mj_step(self.model, self.data)
+            self.data.ctrl[ids] = saved
+        else:
+            for _ in range(self.n_sub):
+                mujoco.mj_step(self.model, self.data)
         self.t += 1.0 / CTRL_HZ
         if watch:
             watch()
