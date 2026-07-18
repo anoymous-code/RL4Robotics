@@ -152,7 +152,12 @@ class PillTearEnv(gym.Env):
             self._latched = False
 
     def _seg_gripped(self):
-        """右手指是否夹触目标格板缘。"""
+        """右手指是否夹触目标格板缘（任一指接触即可）。
+
+        注意：RL 精修环境（TearRefineEnv）用的是更严格的"双指同时接触"
+        规则以封堵 reward hacking；此处保持单指规则，与采集演示时
+        脚本专家的物理（纯载荷阈值断裂）一致——ACT 的训练分布建立在
+        该物理上，评测环境不能事后改规则。"""
         model, data = self.model, self.data
         for i in range(data.ncon):
             g1, g2 = data.contact[i].geom1, data.contact[i].geom2

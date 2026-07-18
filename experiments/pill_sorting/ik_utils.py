@@ -47,7 +47,11 @@ class ArmKinematics:
 
     def _solve_once(self, data_ref, target_pos, axes, q_init,
                     iters, tol, damping, step_scale):
-        data = mujoco.MjData(self.model)
+        # 复用暂存 mjData：纯运动学迭代只读写 qpos/xpos，无需干净动力学状态；
+        # 每次求解新建 mjData 会在长训练中造成内存碎片（Windows 上引擎分配失败）
+        if not hasattr(self, "_scratch") or self._scratch is None:
+            self._scratch = mujoco.MjData(self.model)
+        data = self._scratch
         data.qpos[:] = data_ref.qpos
         if q_init is not None:
             data.qpos[self.qpos_ids] = q_init

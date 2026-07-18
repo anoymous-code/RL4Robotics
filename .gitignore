@@ -12,6 +12,7 @@ site/
 wandb/
 experiments/**/debug/
 experiments/**/demos/
+experiments/**/checkpoints/
 
 # 第三方模型库（体积大，用 scripts/download_assets.ps1 重新获取）
 third_party/
