@@ -46,7 +46,8 @@
 | 全闭环 v3（盒 A 取板→撕剪→入盒 B→放回盒 A） | A | <span class="badge badge-done">完成</span> | [2026-07-17 (晚)](../journal/2026-07-17-full.md) |
 | 移动操作机器人 v5（轮式双臂 + 固定桌，导航 + 全闭环分药） | A | <span class="badge badge-done">完成</span> | [2026-07-18](../journal/2026-07-18-mobile.md) |
 | 分药 Gymnasium 环境 + 域随机化 + 专家数据采集（10/10） | A | <span class="badge badge-done">完成</span> | [2026-07-18 (下)](../journal/2026-07-18-pipeline.md) |
-| ACT 模仿学习训练 + 随机位置成功率评测 | A | <span class="badge badge-todo">未开始</span> | - |
+| ACT 模仿学习（撕剪 80% / 全流程 75%，错标定脚本 7.5 倍） | A | <span class="badge badge-done">完成</span> | [2026-07-18 (夜)](../journal/2026-07-18-result.md) |
+| RL 精修接触环节（撕剪滑脱/投放弹出） | A | <span class="badge badge-todo">未开始</span> | - |
 | 铝塑板按压策略（学习版） | A | <span class="badge badge-todo">未开始</span> | - |
 | 药片识别数据集 | A | <span class="badge badge-todo">未开始</span> | - |
 | 袖带缠绕可行性调研 | B | <span class="badge badge-todo">未开始</span> | - |

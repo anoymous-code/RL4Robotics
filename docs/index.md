@@ -71,14 +71,14 @@ graph LR
 ## 当前进度
 
 <div class="stat-grid" markdown>
-<div class="stat-card" markdown><span class="num">0→2</span><span class="label">当前阶段 / 共 7 阶段</span></div>
-<div class="stat-card" markdown><span class="num">6</span><span class="label">学习日志篇数</span></div>
-<div class="stat-card" markdown><span class="num">8</span><span class="label">完成的仿真实验</span></div>
-<div class="stat-card" markdown><span class="num">10/10</span><span class="label">专家随机场景成功率</span></div>
+<div class="stat-card" markdown><span class="num">2</span><span class="label">当前阶段 / 共 7 阶段</span></div>
+<div class="stat-card" markdown><span class="num">8</span><span class="label">学习日志篇数</span></div>
+<div class="stat-card" markdown><span class="num">274</span><span class="label">自动采集演示数据（条）</span></div>
+<div class="stat-card" markdown><span class="num">75%</span><span class="label">ACT 策略全流程成功率</span></div>
 </div>
 
-!!! warning "最新进展 · 2026-07-18 深夜"
-    **第一次策略评测 0/20，完成三层失败解剖**：任务信息缺失、环境物理残缺（重放实验揪出）、相位混淆（BC 复合误差 + 因果混淆的活教材）。修复 + DART 带噪专家重采 + 传感器 dropout，流水线 v2 运行中。[看破案日志 →](journal/2026-07-18-debug.md)
+!!! success "最新进展 · 2026-07-18 夜"
+    **首个从像素学到的分药策略达成**：ACT 视觉策略在随机场景上撕剪 80%、全流程 75%——同序列下错标定 3 cm 的脚本只有 10%，"从图像适应位置"的价值被定量证明。经历 0/20 → 三层解剖 → 修复的完整过程。[看结果日志 →](journal/2026-07-18-result.md)
 
 !!! tip "如何使用这个网站"
     - **[学习路线图](roadmap.md)**：整个项目的地图，随时回来看看我们走到哪了。
