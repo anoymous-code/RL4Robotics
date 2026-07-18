@@ -93,6 +93,9 @@ class FullDemo:
         # 让演示覆盖轨迹管道邻域、教会策略纠正偏差（对抗 BC 复合误差）
         self.action_noise = action_noise
         self._ou = np.zeros(12)
+        # 感知偏移（错标定对照实验）：所有"感知性"位姿读取统一加此偏移，
+        # 模拟手眼标定/位姿估计误差；成功判定仍用真值
+        self.sense_offset = np.zeros(3)
         self.model = ts.load_model(self.cfg)
         stiffen_arm(self.model, "left", LEFT_KP_SCALE)
         stiffen_arm(self.model, "right", RIGHT_KP_SCALE)
@@ -200,9 +203,15 @@ class FullDemo:
         return pos, rot
 
     def strip_pose(self):
+        """感知性读取：板位姿（带 sense_offset，模拟标定误差）。"""
         mujoco.mj_forward(self.model, self.data)
         s = self.data.body("strip")
-        return s.xpos.copy(), s.xmat.reshape(3, 3).copy()
+        return s.xpos.copy() + self.sense_offset, s.xmat.reshape(3, 3).copy()
+
+    def sense_body_pos(self, name):
+        """感知性读取：任意 body 位置（带 sense_offset）。"""
+        mujoco.mj_forward(self.model, self.data)
+        return self.data.body(name).xpos.copy() + self.sense_offset
 
     def record_grasp_frame(self):
         """记录抓稳时 strip 在左站点系中的相对位姿。"""
@@ -364,8 +373,7 @@ class FullDemo:
             R_tear = axes_rot(AXES_TEAR)
 
             def site_target():
-                mujoco.mj_forward(model, data)
-                seg_pos = data.body(seg).xpos.copy()
+                seg_pos = self.sense_body_pos(seg)
                 grasp = seg_pos + np.array([ts.SEG_HX - EDGE_OVERLAP, 0, 0])
                 return grasp - R_tear @ PADS_LOCAL
 
@@ -410,7 +418,7 @@ class FullDemo:
             q_lift, _, _ = self.right.solve(data, lift, axes=AXES_TEAR,
                                             q_init=self.right.q_now(data))
             self.move_joint(self.right, q_lift, 1.0)
-            drop = self.cfg.box_b_center + np.array([0, 0, 0.075])
+            drop = self.cfg.box_b_center + self.sense_offset + np.array([0, 0, 0.075])
             q_drop, e, a = self.right.solve(data, drop, axes=[(0, DOWN)], q_init=q_lift)
             self.log(f"IK 右臂投放位(指尖朝下): 误差 {e*1000:.1f}mm/{a:.1f}°")
             self.move_joint(self.right, q_drop, 2.4)
