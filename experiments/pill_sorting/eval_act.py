@@ -20,6 +20,7 @@ from PIL import Image
 
 import tear_scene as ts
 from pill_env import CAMS, PillTearEnv
+from run_full_demo import QuadCam
 from train_act import CHUNK, IMG_MEAN, IMG_STD, ACTLite
 
 HERE = Path(__file__).resolve().parent
@@ -69,9 +70,10 @@ def rollout(env, policy, video_path=None, seed=None):
     可以实质推进，新图像随之明显变化，相位得以校准。"""
     obs, info = env.reset(seed=seed)
     target_row = int(info["cfg"].target_seg[1])
-    writer = None
+    writer, quad = None, None
     if video_path:
-        writer = imageio.get_writer(video_path, fps=25, macro_block_size=1)
+        writer = imageio.get_writer(video_path, fps=25, quality=7, macro_block_size=1)
+        quad = QuadCam(env.model)   # 四视角高清合成（全景/主视角/双手眼）
     max_steps = int(EPISODE_SECS * 50)
     last_info, steps, done = {}, 0, False
     while steps < max_steps and not done:
@@ -80,13 +82,13 @@ def rollout(env, policy, video_path=None, seed=None):
             obs, reward, terminated, truncated, last_info = env.step(chunk[k])
             steps += 1
             if writer and steps % 2 == 0:
-                bottom = np.hstack([obs["wrist_cam_left"], obs["wrist_cam_right"]])[:, ::2]
-                writer.append_data(np.vstack([obs["head_cam"], bottom]))
+                writer.append_data(quad.composite(env.data))
             if terminated or steps >= max_steps:
                 done = terminated
                 break
     if writer:
         writer.close()
+        quad.close()
     return last_info
 
 
@@ -96,7 +98,7 @@ def main(n, ckpt, video):
     n_seg, n_full = 0, 0
     for ep in range(n):
         vp = None
-        if video and ep < 3:
+        if video and ep < 1:   # 四视角高清视频体积大，只录代表性一条
             vp = VIDEO_DIR / f"act_rollout_{ep}.mp4"
         info = rollout(env, policy, video_path=vp, seed=10000 + ep)
         n_seg += bool(info.get("seg_in_box_b"))

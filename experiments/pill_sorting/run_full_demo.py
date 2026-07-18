@@ -24,7 +24,7 @@ import numpy as np
 
 import tear_scene as ts
 from ik_utils import ARM_JOINTS, ArmKinematics
-from run_demo import (FPS, CTRL_HZ, IMAGE_DIR, VIDEO_DIR, LiveWindow, MultiCam,
+from run_demo import (FPS, CTRL_HZ, IMAGE_DIR, VIDEO_DIR, LiveWindow,
                       minjerk, stiffen_arm)
 
 NEUTRAL_ARM = np.array([0.0, -0.96, 1.16, 0.0, -0.3, 0.0])
@@ -54,6 +54,55 @@ TEAR_TARGETS = [(3, 0), (3, 1)]  # 从自由端顺序撕：第 4 列前排、后
 AXES_GRASP_DOWN = [(0, DOWN), (1, X)]    # 竖直向下抓手柄：指向下，开合轴沿板厚(x)
 AXES_HOLD = [(0, X), (1, UP)]            # 水平持板：指向 +x，开合轴竖直
 AXES_TEAR = [(0, -X), (1, UP)]           # 右手撕剪：指向 -x，开合轴竖直
+
+
+class QuadCam:
+    """四视角 2x2 高清合成（每格 960x720，总 1920x1440）：
+
+        场景全景 | 机器人主视角(head_cam)
+        左腕手眼 | 右腕手眼
+
+    全景为外部第三人称机位（仅展示用）；其余三路与策略观测同机位（高清重渲染）。
+    """
+
+    VIEWS = (("room", "场景全景"), ("head_cam", "机器人主视角"),
+             ("wrist_cam_left", "左腕手眼"), ("wrist_cam_right", "右腕手眼"))
+    CELL_H, CELL_W = 720, 960
+
+    def __init__(self, model):
+        self.r = mujoco.Renderer(model, height=self.CELL_H, width=self.CELL_W)
+        try:
+            from PIL import ImageFont
+
+            self._font = ImageFont.truetype(r"C:\Windows\Fonts\msyh.ttc", 34)
+        except Exception:
+            self._font = None
+
+    def _label(self, img, text):
+        if self._font is None:
+            return img
+        from PIL import Image, ImageDraw
+
+        im = Image.fromarray(img)
+        draw = ImageDraw.Draw(im, "RGBA")
+        draw.rectangle([10, 10, 34 + 34 * len(text), 62], fill=(0, 0, 0, 140))
+        draw.text((20, 16), text, font=self._font, fill=(255, 255, 255, 235))
+        return np.asarray(im)
+
+    def composite(self, data):
+        cells = []
+        for cam, name in self.VIEWS:
+            self.r.update_scene(data, camera=cam)
+            cells.append(self._label(self.r.render().copy(), name))
+        top = np.hstack(cells[:2])
+        bottom = np.hstack(cells[2:])
+        frame = np.vstack([top, bottom])
+        frame[self.CELL_H - 2:self.CELL_H + 2, :] = 24     # 分隔线
+        frame[:, self.CELL_W - 2:self.CELL_W + 2] = 24
+        return frame
+
+    def close(self):
+        self.r.close()
 
 
 def axes_rot(axes):
@@ -111,7 +160,7 @@ class FullDemo:
         self.right = ArmKinematics(self.model, "right", "right/gripper")
         self.left_grip = self.model.actuator("left/gripper").id
         self.right_grip = self.model.actuator("right/gripper").id
-        self.cams = MultiCam(self.model) if make_video else None
+        self.cams = QuadCam(self.model) if make_video else None
         self.live = None
         if live and make_video:
             try:
@@ -122,7 +171,8 @@ class FullDemo:
         if make_video:
             # 流式写盘：全流程 1500+ 帧若囤内存（>6GB）会让编码器分配失败
             self.video_path = VIDEO_DIR / "pill_full_v5_mobile_multicam.mp4"
-            self.writer = imageio.get_writer(self.video_path, fps=FPS, macro_block_size=1)
+            self.writer = imageio.get_writer(self.video_path, fps=FPS,
+                                             quality=7, macro_block_size=1)
         self.n_frames = 0
         self.t = 0.0
         self.load_log = {"t": [], "load": [], "weld": []}
@@ -502,12 +552,8 @@ class FullDemo:
     def run(self):
         self.reset()
         if not self.skip_drive:
-            if self.cams is not None:
-                self.cams.MAIN = "room"      # 行驶阶段用房间全景机位
             self.dwell(0.6)
             self.drive_to_work()
-        if self.cams is not None:
-            self.cams.MAIN = "follow_pack"
         self.dwell(0.5)
         self.pick_board()
         results = self.tear_segments()
