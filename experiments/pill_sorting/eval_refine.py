@@ -96,6 +96,17 @@ def main():
 
     arr = np.array(rows)
     n = len(arr)
+    csv_path = HERE / "debug" / "eval_refine_paired.csv"
+    with open(csv_path, "w", encoding="utf-8") as f:
+        f.write("idx,pool,fric,mass,thresh,sense_x_mm,sense_y_mm,"
+                "script_ok,script_torn,rl_ok,rl_torn\n")
+        for i, ((idx, phys), (z_ok, z_torn, r_ok, r_torn)) in enumerate(
+                zip(conds, rows)):
+            f.write(f"{i},{idx},{phys['fric']:.3f},{phys['mass']:.3f},"
+                    f"{phys['thresh']:.3f},{phys['sense'][0]*1000:.1f},"
+                    f"{phys['sense'][1]*1000:.1f},"
+                    f"{int(z_ok)},{int(z_torn)},{int(r_ok)},{int(r_torn)}\n")
+    print(f"配对明细: {csv_path}")
     print(f"\n===== 配对对比（{n} 组相同场景+物理参数） =====")
     print(f"零残差脚本 : 撕断 {arr[:,1].sum()}/{n}, 入盒 B {arr[:,0].sum()}/{n}"
           f" = {arr[:,0].mean()*100:.0f}%")

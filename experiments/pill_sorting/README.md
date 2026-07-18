@@ -33,6 +33,7 @@ powershell -File ..\..\scripts\download_assets.ps1
 | `train_ppo_refine.py` | PPO 训练相位级修正策略（SB3，8 并行环境，CPU） |
 | `eval_refine.py` | 配对评测：同一批（场景×物理参数）对比零动作脚本 vs RL 策略，可录四视角视频 |
 | `plot_refine_curve.py` | 从 VecMonitor csv 画 PPO 训练曲线 |
+| `plot_refine_paired.py` | 从配对评测 CSV 画对比总览图（格子图 + 按感知偏移分桶） |
 | `demo_to_video.py` | 把一条 HDF5 演示合成三机位视频（数据样例可视化） |
 | `wait_and_train.ps1` | 接力脚本：等采集进程结束自动启动训练（规避页面文件不足） |
 | `tear_scene.py` | v5 场景构建：机器人车体几何 + 固定桌上的盒 A/盒 B + 自由体药板（8 格 + 12 条焊接易撕线）+ 底盘工具函数（直接运行可探测/渲染静帧） |
