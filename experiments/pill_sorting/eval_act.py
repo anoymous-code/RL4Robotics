@@ -61,14 +61,14 @@ class ActPolicy:
         return chunk * self.stats["act_std"] + self.stats["act_mean"]
 
 
-def rollout(env, policy, video_path=None, seed=None):
+def rollout(env, policy, video_path=None, seed=None, phys=None):
     """动作块开环执行 rollout：一次推理执行前 EXEC_STEPS 步再重推理。
 
     注意不用"每步重推理 + 时间集成"：本策略实测忽略 qpos（图像与 qpos 在
     演示中完全冗余，模型走了图像捷径），每步重推理时图像几乎不变 →
     预测停在轨迹同一相位 → 机器人原地冻结。开环执行块内自洽的轨迹段
     可以实质推进，新图像随之明显变化，相位得以校准。"""
-    obs, info = env.reset(seed=seed)
+    obs, info = env.reset(seed=seed, options={"phys": phys} if phys else None)
     target_row = int(info["cfg"].target_seg[1])
     writer, quad = None, None
     if video_path:
@@ -92,19 +92,29 @@ def rollout(env, policy, video_path=None, seed=None):
     return last_info
 
 
-def main(n, ckpt, video):
+def main(n, ckpt, video, phys_level=0.0, tag="act"):
     env = PillTearEnv(seed=1234)
     policy = ActPolicy(HERE / "ckpt" / ckpt)
+    phys_rng = np.random.default_rng(777)   # 物理参数序列与 seed 解耦，档间可配对
     n_seg, n_full = 0, 0
     for ep in range(n):
+        phys = None
+        if phys_level > 0:
+            from tear_refine_env import sample_phys
+
+            phys = sample_phys(phys_rng, level=phys_level)
+            phys.pop("sense", None)   # 视觉策略无标定概念，感知偏移不适用
         vp = None
         if video and ep < 1:   # 四视角高清视频体积大，只录代表性一条
-            vp = VIDEO_DIR / f"act_rollout_{ep}.mp4"
-        info = rollout(env, policy, video_path=vp, seed=10000 + ep)
+            vp = VIDEO_DIR / f"{tag}_rollout_{ep}.mp4"
+        info = rollout(env, policy, video_path=vp, seed=10000 + ep, phys=phys)
         n_seg += bool(info.get("seg_in_box_b"))
         n_full += bool(info.get("board_returned"))
+        extra = (f" fric {phys['fric']:.2f} mass {phys['mass']:.2f} "
+                 f"thr {phys['thresh']:.2f}") if phys else ""
         print(f"[ep {ep:02d}] 撕剪入盒 B: {info.get('seg_in_box_b')}, "
-              f"全流程: {info.get('board_returned')}" + (f" 视频 {vp}" if vp else ""))
+              f"全流程: {info.get('board_returned')}{extra}"
+              + (f" 视频 {vp}" if vp else ""), flush=True)
     print(f"\n成功率: 撕剪入盒 B {n_seg}/{n}, 全流程 {n_full}/{n}")
     env.close()
 
@@ -114,5 +124,8 @@ if __name__ == "__main__":
     parser.add_argument("--n", type=int, default=20)
     parser.add_argument("--ckpt", type=str, default="act_latest.pt")
     parser.add_argument("--video", action="store_true")
+    parser.add_argument("--phys", type=float, default=0.0,
+                        help="物理随机化档位（摩擦/质量/断裂阈值，0=标称）")
+    parser.add_argument("--tag", type=str, default="act", help="视频文件名前缀")
     args = parser.parse_args()
-    main(args.n, args.ckpt, args.video)
+    main(args.n, args.ckpt, args.video, phys_level=args.phys, tag=args.tag)

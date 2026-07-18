@@ -126,11 +126,18 @@ class ACTLite(nn.Module):
 
 
 # ---------------- 训练 ----------------
-def train(steps, batch, lr=1e-4, out_tag="act", max_files=None):
+def train(steps, batch, lr=1e-4, out_tag="act", max_files=None,
+          teacher_repeat=0):
     files = sorted(DEMO_DIR.glob("episode_*_ok.hdf5"))
     if max_files:
         files = files[:max_files]
     assert files, "没有演示数据，先运行 collect_demos.py"
+    teacher = sorted(DEMO_DIR.glob("teacher_*_ok.hdf5"))
+    if teacher_repeat and teacher:
+        # 教师子任务演示比全流程演示短（~400 vs ~2000 ticks），
+        # 按 tick 平铺采样会被稀释，重复 N 次做重加权
+        files = files + teacher * teacher_repeat
+        print(f"混入 RL 教师演示 {len(teacher)} 条 × {teacher_repeat}")
     print(f"扫描 {len(files)} 个数据文件...", flush=True)
     ds = DemoDataset(files)
     print(f"数据: {len(files)} 条演示, {len(ds)} 个训练样本")
@@ -193,7 +200,7 @@ def train(steps, batch, lr=1e-4, out_tag="act", max_files=None):
     ax.grid(alpha=0.3)
     ax.set_yscale("log")
     fig.tight_layout()
-    fig.savefig(IMAGE_DIR / "act_train_loss.png")
+    fig.savefig(IMAGE_DIR / f"{out_tag}_train_loss.png")
     with open(CKPT_DIR / f"{out_tag}_log.json", "w") as f:
         json.dump(log, f)
     print(f"完成: ckpt/{out_tag}_latest.pt, 曲线 {IMAGE_DIR / 'act_train_loss.png'}")
@@ -206,5 +213,9 @@ if __name__ == "__main__":
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--max-files", type=int, default=None,
                         help="只用前 N 个数据文件（避开采集进程正在写的文件）")
+    parser.add_argument("--out-tag", type=str, default="act")
+    parser.add_argument("--teacher-repeat", type=int, default=0,
+                        help="混入 teacher_*_ok.hdf5 并重复 N 次（DAgger 蒸馏）")
     args = parser.parse_args()
-    train(args.steps, args.batch, args.lr, max_files=args.max_files)
+    train(args.steps, args.batch, args.lr, out_tag=args.out_tag,
+          max_files=args.max_files, teacher_repeat=args.teacher_repeat)

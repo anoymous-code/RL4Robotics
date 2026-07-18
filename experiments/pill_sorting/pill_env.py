@@ -98,6 +98,20 @@ class PillTearEnv(gym.Env):
 
         self.cfg = (options or {}).get("cfg") or ts.sample_cfg(self.rng, self.rand_level)
         self.model = tune_model(ts.load_model(self.cfg))
+        # 物理随机化档位（评测蒸馏策略的抗物理扰动能力）：
+        # 摩擦/质量缩放进模型，断裂阈值缩放存 self._tear_load
+        phys = (options or {}).get("phys") or {}
+        self._tear_load = TEAR_LOAD * phys.get("thresh", 1.0)
+        if phys:
+            rf = [self.model.body("right/left_finger_link").id,
+                  self.model.body("right/right_finger_link").id]
+            pads = [g for g in range(self.model.ngeom)
+                    if self.model.geom_bodyid[g] in rf]
+            self.model.geom_friction[pads, 0] *= phys.get("fric", 1.0)
+            segs = [self.model.body(ts.seg_name(c, r)).id
+                    for c, r in ts.all_segments()]
+            self.model.body_mass[segs] *= phys.get("mass", 1.0)
+            self.model.body_inertia[segs] *= phys.get("mass", 1.0)
         self.data = mujoco.MjData(self.model)
         self.n_sub = int(1.0 / CTRL_HZ / self.model.opt.timestep)
         self.act_ids = actuator_ids14(self.model)
@@ -183,7 +197,7 @@ class PillTearEnv(gym.Env):
                 if e in loads:
                     loads[e] += abs(data.efc_force[i])
         for e, load in loads.items():
-            if load >= TEAR_LOAD:
+            if load >= self._tear_load:
                 self._over_cnt[e] = self._over_cnt.get(e, 0) + 1
                 if self._over_cnt[e] >= TEAR_HOLD:
                     self.model.eq_active0[e] = 0

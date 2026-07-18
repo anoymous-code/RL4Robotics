@@ -97,7 +97,9 @@ class TearRefineEnv(gym.Env):
         self.rng = np.random.default_rng(seed)
         self.phys_level = phys_level
         self._cache = {}
-        self.render_hook = None      # 每控制周期回调 hook(data)（评测录像用）
+        self.render_hook = None      # 每控制周期回调 hook(data)，步进后（评测录像用）
+        self.tick_hook = None        # 每控制周期回调 hook(model, data)，写 ctrl 后、
+                                     # 步进前——(观测, 动作) 对齐，演示录制用
 
         self.action_space = spaces.Box(-1.0, 1.0, (5,), np.float32)
         self.observation_space = spaces.Box(-np.inf, np.inf, (59,), np.float32)
@@ -311,6 +313,8 @@ class TearRefineEnv(gym.Env):
             self._phase_ctrl(plan, k, dur)
             lo, hi = self.model.actuator_ctrlrange.T
             self.data.ctrl[:] = np.clip(self.ctrl_nom, lo, hi)
+            if self.tick_hook is not None:
+                self.tick_hook(self.model, self.data)
             for _ in range(self.n_sub):
                 mujoco.mj_step(self.model, self.data)
             self._check_tears()

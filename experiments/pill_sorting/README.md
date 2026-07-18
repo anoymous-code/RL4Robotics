@@ -35,6 +35,8 @@ powershell -File ..\..\scripts\download_assets.ps1
 | `plot_refine_curve.py` | 从 VecMonitor csv 画 PPO 训练曲线 |
 | `plot_refine_paired.py` | 从配对评测 CSV 画对比总览图（格子图 + 按感知偏移分桶） |
 | `inspect_refine_case.py` | 成功案例解剖：重放指定配对组，打印脚本失败方式与 RL 每个相位的修正量 |
+| `collect_teacher_demos.py` | RL 教师生成蒸馏演示（学生观测格式 HDF5，物理随机化 + 偏移截幅，失败丢弃） |
+| `record_compare.py` | 同屏对比视频：同一（场景+物理参数）下零动作脚本 vs RL 修正，左右分屏 + 结果印章 |
 | `demo_to_video.py` | 把一条 HDF5 演示合成三机位视频（数据样例可视化） |
 | `wait_and_train.ps1` | 接力脚本：等采集进程结束自动启动训练（规避页面文件不足） |
 | `tear_scene.py` | v5 场景构建：机器人车体几何 + 固定桌上的盒 A/盒 B + 自由体药板（8 格 + 12 条焊接易撕线）+ 底盘工具函数（直接运行可探测/渲染静帧） |
