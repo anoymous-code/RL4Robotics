@@ -71,14 +71,14 @@ graph LR
 ## 当前进度
 
 <div class="stat-grid" markdown>
-<div class="stat-card" markdown><span class="num">0</span><span class="label">当前阶段 / 共 7 阶段</span></div>
-<div class="stat-card" markdown><span class="num">5</span><span class="label">学习日志篇数</span></div>
-<div class="stat-card" markdown><span class="num">7</span><span class="label">完成的仿真实验</span></div>
-<div class="stat-card" markdown><span class="num">2/2+回收</span><span class="label">分药 v5 移动全流程成功</span></div>
+<div class="stat-card" markdown><span class="num">0→2</span><span class="label">当前阶段 / 共 7 阶段</span></div>
+<div class="stat-card" markdown><span class="num">6</span><span class="label">学习日志篇数</span></div>
+<div class="stat-card" markdown><span class="num">8</span><span class="label">完成的仿真实验</span></div>
+<div class="stat-card" markdown><span class="num">10/10</span><span class="label">专家随机场景成功率</span></div>
 </div>
 
 !!! success "最新进展 · 2026-07-18"
-    **分药 v5 移动操作机器人达成**：机器人 = 轮式底盘 + 双臂并排朝前（Mobile ALOHA 形态），盒 A/盒 B 在固定桌上；驶离充电桩停到桌前，双臂越过桌沿完成取板、撕剪入盒 B（2/2）、剩板插回盒 A，62 秒全流程。[看移动全流程演示 →](journal/2026-07-18-mobile.md)
+    **学习管线开工**：v5 场景 Gymnasium 化 + 域随机化（盒位/停车/目标格），机载三相机观测对齐真机配置，脚本专家改造成数据生成器——随机场景 10/10 成功，自动产出 ACT 格式演示数据。下一步：扩大采集并训练 ACT。[看管线日志 →](journal/2026-07-18-pipeline.md)
 
 !!! tip "如何使用这个网站"
     - **[学习路线图](roadmap.md)**：整个项目的地图，随时回来看看我们走到哪了。

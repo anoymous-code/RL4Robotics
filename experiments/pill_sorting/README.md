@@ -24,7 +24,9 @@ powershell -File ..\..\scripts\download_assets.ps1
 
 | 文件 | 说明 |
 |---|---|
-| `run_full_demo.py` | **v5 主演示**：导航到桌前 → 取板 → 撕剪 ×2 → 入盒 B → 放回盒 A 全流程编排 + 录像 + 载荷曲线 |
+| `run_full_demo.py` | **v5 主演示 / 脚本专家**：导航到桌前 → 取板 → 撕剪 → 入盒 B → 放回盒 A（支持 `SceneCfg` 域随机化、跳导航、录制钩子） |
+| `pill_env.py` | Gymnasium 环境：reset 域随机化，动作 14 维（双臂+爪），观测 = qpos + 机载三相机图像 |
+| `collect_demos.py` | 脚本专家自动采集演示数据（ACT 风格 HDF5，含成功率统计），产物在 `demos/`（不入库） |
 | `tear_scene.py` | v5 场景构建：机器人车体几何 + 固定桌上的盒 A/盒 B + 自由体药板（8 格 + 12 条焊接易撕线）+ 底盘工具函数（直接运行可探测/渲染静帧） |
 | `aloha_tear.xml` / `scene_tear.xml` | v5 机器人模型（双臂并排朝前挂 mobile_base）与房间场景（固定桌子），由 `gen_tear_model.py` 生成 |
 | `run_demo.py` | v1 主演示：按压编排 + 破膜模拟 + 录像 + 力曲线（`MultiCam`/`LiveWindow` 亦被 v3 复用） |
@@ -43,6 +45,10 @@ cd experiments\pill_sorting
 ..\..\.venv\Scripts\python.exe run_full_demo.py --live      # 同时弹窗实时观看（需图形界面）
 ..\..\.venv\Scripts\python.exe run_full_demo.py --no-latch  # 左手纯摩擦对照（撕剪反力矩下会滑）
 # 产出: docs/assets/videos/pill_full_v5_mobile_multicam.mp4 与 docs/assets/images/pill_full_v5_load.png
+
+# 学习管线：环境烟测 / 演示数据采集（域随机化 + 成功率统计）
+..\..\.venv\Scripts\python.exe pill_env.py
+..\..\.venv\Scripts\python.exe collect_demos.py --n 50 --seed 0   # 产物在 demos/
 
 # v1 按压取药
 ..\..\.venv\Scripts\python.exe run_demo.py [--live]

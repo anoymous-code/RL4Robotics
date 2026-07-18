@@ -110,6 +110,8 @@
       <geom type="cylinder" size="0.075 0.030" pos="-0.22 0.12000000000000001 -0.675" quat="0.7071 0.7071 0 0" contype="0" conaffinity="0" mass="1.5" rgba="0.12 0.12 0.13 1"/>
       <geom type="cylinder" size="0.075 0.030" pos="0.22 -0.16 -0.675" quat="0.7071 0.7071 0 0" contype="0" conaffinity="0" mass="1.5" rgba="0.12 0.12 0.13 1"/>
       <geom type="cylinder" size="0.075 0.030" pos="0.22 0.12000000000000001 -0.675" quat="0.7071 0.7071 0 0" contype="0" conaffinity="0" mass="1.5" rgba="0.12 0.12 0.13 1"/>
+      <geom type="box" size="0.03 0.02 0.04" pos="0 -0.10 0.52" contype="0" conaffinity="0" mass="0.3" rgba="0.2 0.2 0.22 1"/>
+      <camera name="head_cam" pos="0 -0.08 0.55" xyaxes="1 0 0 0 0.86 0.51" fovy="70"/>
       <body name="left/base_link" childclass="vx300s" pos="-0.235 0 0.02" quat="0.7071068 0 0 0.7071068">
       <inertial pos="-0.0534774 -0.000562575 0.0205961" quat="-0.00292324 0.712517 0.00480387 0.701633" mass="0.969034"
         diaginertia="0.0071633 0.00602451 0.00169819"/>

@@ -11,6 +11,7 @@ site/
 *.pt
 wandb/
 experiments/**/debug/
+experiments/**/demos/
 
 # 第三方模型库（体积大，用 scripts/download_assets.ps1 重新获取）
 third_party/

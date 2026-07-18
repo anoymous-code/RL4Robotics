@@ -71,9 +71,24 @@ def _quat_mat(quat):
 
 
 class FullDemo:
-    def __init__(self, live=False, latch=False):
+    """完整分药流程的脚本专家。
+
+    cfg        场景实例（域随机化参数），None = 标称布局；
+    skip_drive 跳过导航段（数据采集用：episode 从停稳后开始）；
+    targets    要撕的格列表，None = 默认 [(3,0),(3,1)]，采数据传 [cfg.target_seg]；
+    recorder   每个控制周期回调 recorder.tick(model, data)（演示数据录制钩子）；
+    make_video 是否合成三机位 mp4（采数据时关掉省渲染）。
+    """
+
+    def __init__(self, live=False, latch=True, cfg=None, skip_drive=False,
+                 targets=None, recorder=None, make_video=True, verbose=True):
+        self.cfg = cfg or ts.SceneCfg()
         self.latch = latch
-        self.model = ts.load_model()
+        self.skip_drive = skip_drive
+        self.targets = list(targets) if targets is not None else [(3, 0), (3, 1)]
+        self.recorder = recorder
+        self.verbose = verbose
+        self.model = ts.load_model(self.cfg)
         stiffen_arm(self.model, "left", LEFT_KP_SCALE)
         stiffen_arm(self.model, "right", RIGHT_KP_SCALE)
         # 夹爪增强：薄物夹持全靠指尖过盈；ctrlrange 下限 0.002 是真机软件限位，放开到 0
@@ -88,16 +103,18 @@ class FullDemo:
         self.right = ArmKinematics(self.model, "right", "right/gripper")
         self.left_grip = self.model.actuator("left/gripper").id
         self.right_grip = self.model.actuator("right/gripper").id
-        self.cams = MultiCam(self.model)
+        self.cams = MultiCam(self.model) if make_video else None
         self.live = None
-        if live:
+        if live and make_video:
             try:
                 self.live = LiveWindow()
             except Exception as exc:
-                print(f"实时窗口不可用（{exc}），仅录制视频")
-        # 流式写盘：全流程 1500+ 帧若囤内存（>6GB）会让编码器分配失败
-        self.video_path = VIDEO_DIR / "pill_full_v5_mobile_multicam.mp4"
-        self.writer = imageio.get_writer(self.video_path, fps=FPS, macro_block_size=1)
+                self.log(f"实时窗口不可用（{exc}），仅录制视频")
+        self.writer = None
+        if make_video:
+            # 流式写盘：全流程 1500+ 帧若囤内存（>6GB）会让编码器分配失败
+            self.video_path = VIDEO_DIR / "pill_full_v5_mobile_multicam.mp4"
+            self.writer = imageio.get_writer(self.video_path, fps=FPS, macro_block_size=1)
         self.n_frames = 0
         self.t = 0.0
         self.load_log = {"t": [], "load": [], "weld": []}
@@ -105,11 +122,16 @@ class FullDemo:
         self.broken = set()
         self.strip_in_site = None   # 抓稳后 strip 在左站点系中的位姿（滑移监控/放回规划）
 
+    def log(self, msg):
+        if self.verbose:
+            print(msg)
+
     # ---------- 基础设施 ----------
     def reset(self):
         model, data = self.model, self.data
         mujoco.mj_resetData(model, data)
-        ts.set_base(model, data, ts.BASE_START)
+        base0 = self.cfg.base_work if self.skip_drive else self.cfg.base_start
+        ts.set_base(model, data, base0)
         for side in ("left", "right"):
             for jname, q in zip(ARM_JOINTS, NEUTRAL_ARM):
                 data.qpos[model.joint(f"{side}/{jname}").qposadr[0]] = q
@@ -121,12 +143,14 @@ class FullDemo:
         mujoco.mj_forward(model, data)
 
     def step_ctrl(self, watch=None):
+        if self.recorder is not None:
+            self.recorder.tick(self.model, self.data)   # 步进前记录 (观测, 动作=当前 ctrl)
         for _ in range(self.n_sub):
             mujoco.mj_step(self.model, self.data)
         self.t += 1.0 / CTRL_HZ
         if watch:
             watch()
-        if self.n_frames * (1.0 / FPS) <= self.t:
+        if self.writer is not None and self.n_frames * (1.0 / FPS) <= self.t:
             frame = self.cams.composite(self.data)
             self.writer.append_data(frame)
             self.n_frames += 1
@@ -217,7 +241,7 @@ class FullDemo:
                     data.eq_active[model.equality(w).id] = 0
                     self.broken.add(w)
                     self.breaks.append((self.t, w, load))
-                    print(f"[t={self.t:6.2f}s] 易撕线 {w} 断裂（载荷 {load:.1f}）")
+                    self.log(f"[t={self.t:6.2f}s] 易撕线 {w} 断裂（载荷 {load:.1f}）")
 
         return watch
 
@@ -226,7 +250,8 @@ class FullDemo:
         """差速底盘式编排：原地转向 → 直线行驶 → 回正停到桌前（车头 = 车体局部 +y）。"""
         model, data = self.model, self.data
         acts = {n: model.actuator(n).id for n in ("base_x", "base_y", "base_yaw")}
-        start, work = ts.BASE_START, ts.BASE_WORK
+        start = np.asarray(self.cfg.base_start)
+        work = np.asarray(self.cfg.base_work)
         delta = work[:2] - start[:2]
         heading = np.arctan2(-delta[0], delta[1])   # 使车头(+y 局部)对准位移方向的 yaw
 
@@ -256,7 +281,7 @@ class FullDemo:
         by = data.qpos[model.joint("base_y").qposadr[0]]
         yaw = data.qpos[model.joint("base_yaw").qposadr[0]]
         err = np.hypot(bx - work[0], by - work[1]) * 1000
-        print(f"[t={self.t:6.2f}s] 停到桌前 ({bx:.3f}, {by:.3f}, yaw {np.degrees(yaw):.1f}°)，"
+        self.log(f"[t={self.t:6.2f}s] 停到桌前 ({bx:.3f}, {by:.3f}, yaw {np.degrees(yaw):.1f}°)，"
               f"停车误差 {err:.1f} mm")
 
     # ---------- 阶段 1-2：盒 A 取板 → 工作位 ----------
@@ -273,19 +298,19 @@ class FullDemo:
 
         pre = tab_grasp_site() + np.array([0, 0, 0.05])
         q_pre, e, a = self.left.solve(data, pre, axes=AXES_GRASP_DOWN, q_init=NEUTRAL_ARM)
-        print(f"IK 左臂预抓取: 误差 {e*1000:.1f}mm/{a:.1f}°")
+        self.log(f"IK 左臂预抓取: 误差 {e*1000:.1f}mm/{a:.1f}°")
         self.move_joint(self.left, q_pre, 2.0)
         self.dwell(0.3)
 
         q_grasp, e, a = self.left.solve(data, tab_grasp_site(), axes=AXES_GRASP_DOWN, q_init=q_pre)
-        print(f"IK 左臂抓取位: 误差 {e*1000:.1f}mm/{a:.1f}°")
+        self.log(f"IK 左臂抓取位: 误差 {e*1000:.1f}mm/{a:.1f}°")
         self.move_joint(self.left, q_grasp, 1.2)
         self.close_gripper(self.left_grip, GRIP_CLOSE_L)
         self.dwell(0.3)
         self.record_grasp_frame()
         if self.latch:
             ts.engage_latch(model, data)
-            print("已启用左爪锁定（latch）")
+            self.log("已启用左爪锁定（latch）")
 
         # 竖直提出槽位
         sp, _ = self.site_pose(self.left)
@@ -293,7 +318,7 @@ class FullDemo:
                                        axes=AXES_GRASP_DOWN, q_init=q_grasp)
         self.move_joint(self.left, q_lift, 1.8)
         dp, ang = self.strip_slip()
-        print(f"[t={self.t:6.2f}s] 提板完成，夹持滑移 {dp:.1f}mm/{ang:.1f}°")
+        self.log(f"[t={self.t:6.2f}s] 提板完成，夹持滑移 {dp:.1f}mm/{ang:.1f}°")
 
         # 空中转体 90° 到水平工作位（分两步走，避免大幅摆动）。
         # 目标姿态按"板水平"反解手的姿态：抓取时板在槽中有小倾角，
@@ -304,22 +329,22 @@ class FullDemo:
         self.move_joint(self.left, q_mid, 2.0)
         site_hold, axes_hold = self.left_pose_for_strip(STRIP_HOLD, np.eye(3))
         q_hold, e, a = self.left.solve(data, site_hold, axes=axes_hold, q_init=q_mid)
-        print(f"IK 左臂持板位: 误差 {e*1000:.1f}mm/{a:.1f}°")
+        self.log(f"IK 左臂持板位: 误差 {e*1000:.1f}mm/{a:.1f}°")
         self.move_joint(self.left, q_hold, 2.2)
         self.dwell(0.6)
         _, bR = self.strip_pose()
         tilt = np.degrees(np.arccos(np.clip(bR[2, 2], -1, 1)))
-        print(f"[t={self.t:6.2f}s] 转体到工作位，板面倾角 {tilt:.1f}°")
+        self.log(f"[t={self.t:6.2f}s] 转体到工作位，板面倾角 {tilt:.1f}°")
 
     # ---------- 阶段 3-5：撕剪两格入盒 B ----------
     def tear_segments(self):
         model, data = self.model, self.data
         results = []
-        for idx, (col, row) in enumerate(TEAR_TARGETS):
+        for idx, (col, row) in enumerate(self.targets):
             seg = ts.seg_name(col, row)
             target_welds = [w for w in ts.weld_names_of(col, row) if w not in self.broken]
             watch = self.make_watcher(target_welds)
-            print(f"—— 目标 {idx+1}: {seg}，需断开易撕线 {target_welds} ——")
+            self.log(f"—— 目标 {idx+1}: {seg}，需断开易撕线 {target_welds} ——")
 
             R_tear = axes_rot(AXES_TEAR)
 
@@ -333,16 +358,16 @@ class FullDemo:
             pre = site_target() + X * PREGRASP_BACKOFF
             q_pre, e, a = self.right.solve(data, pre, axes=AXES_TEAR,
                                            q_init=self.right.q_now(data))
-            print(f"IK 右臂预抓取: 误差 {e*1000:.1f}mm/{a:.1f}°")
+            self.log(f"IK 右臂预抓取: 误差 {e*1000:.1f}mm/{a:.1f}°")
             self.move_joint(self.right, q_pre, 1.8)
             self.dwell(0.3)
 
             q_grasp, e, a = self.right.solve(data, site_target(), axes=AXES_TEAR, q_init=q_pre)
-            print(f"IK 右臂抓取位: 误差 {e*1000:.1f}mm/{a:.1f}°")
+            self.log(f"IK 右臂抓取位: 误差 {e*1000:.1f}mm/{a:.1f}°")
             self.move_joint(self.right, q_grasp, 1.2)
             self.close_gripper(self.right_grip, GRIP_CLOSE_R)
             self.dwell(0.3)
-            print(f"[t={self.t:6.2f}s] 闭爪后指间接触点: {self.grasp_contacts(seg)}")
+            self.log(f"[t={self.t:6.2f}s] 闭爪后指间接触点: {self.grasp_contacts(seg)}")
 
             # 缓慢扭转撕剪，断裂即停；必要时补一段下拉
             wrist_act = model.actuator("right/wrist_rotate").id
@@ -361,7 +386,7 @@ class FullDemo:
                 self.move_joint(self.right, q_pull, 1.2, watch)
             torn = all(w in self.broken for w in target_welds)
             self.dwell(0.5)   # 断裂后的弹性释放让格在指间振荡，先稳住再运送
-            print(f"[t={self.t:6.2f}s] {seg} 撕剪{'成功' if torn else '失败'}"
+            self.log(f"[t={self.t:6.2f}s] {seg} 撕剪{'成功' if torn else '失败'}"
                   f"（断后指间接触点 {self.grasp_contacts(seg)}）")
 
             # 提起（保持姿态只平移，防甩落）→ 盒 B 上方指尖朝下松爪投放
@@ -370,12 +395,12 @@ class FullDemo:
             q_lift, _, _ = self.right.solve(data, lift, axes=AXES_TEAR,
                                             q_init=self.right.q_now(data))
             self.move_joint(self.right, q_lift, 1.0)
-            drop = ts.BOX_B_CENTER + np.array([0, 0, 0.075])
+            drop = self.cfg.box_b_center + np.array([0, 0, 0.075])
             q_drop, e, a = self.right.solve(data, drop, axes=[(0, DOWN)], q_init=q_lift)
-            print(f"IK 右臂投放位(指尖朝下): 误差 {e*1000:.1f}mm/{a:.1f}°")
+            self.log(f"IK 右臂投放位(指尖朝下): 误差 {e*1000:.1f}mm/{a:.1f}°")
             self.move_joint(self.right, q_drop, 2.4)
             self.dwell(0.3)
-            print(f"[t={self.t:6.2f}s] 投放前指间接触点: {self.grasp_contacts(seg)}")
+            self.log(f"[t={self.t:6.2f}s] 投放前指间接触点: {self.grasp_contacts(seg)}")
             data.ctrl[self.right_grip] = GRIP_OPEN
             self.dwell(0.4)
             shake_base = data.ctrl[wrist_act]
@@ -386,10 +411,10 @@ class FullDemo:
             self.dwell(0.5)
 
             p = data.body(seg).xpos
-            ok = (torn and abs(p[0] - ts.BOX_B_CENTER[0]) < ts.BOX_B_HX
-                  and abs(p[1] - ts.BOX_B_CENTER[1]) < ts.BOX_B_HY and p[2] < 0.05)
+            ok = (torn and abs(p[0] - self.cfg.box_b_xy[0]) < ts.BOX_B_HX
+                  and abs(p[1] - self.cfg.box_b_xy[1]) < ts.BOX_B_HY and p[2] < 0.05)
             results.append((seg, ok))
-            print(f"{seg} 最终位置 {np.round(p, 3)} -> {'√ 入盒 B' if ok else '× 未入盒 B'}")
+            self.log(f"{seg} 最终位置 {np.round(p, 3)} -> {'√ 入盒 B' if ok else '× 未入盒 B'}")
 
             q_home, _, _ = self.right.solve(
                 data, np.array([0.22, 0.02, 0.26]), axes=AXES_TEAR,
@@ -408,10 +433,10 @@ class FullDemo:
         self.move_joint(self.left, q_mid, 2.2)
 
         R_vert = _quat_mat(ts.BOARD_UP_QUAT)
-        strip_high = ts.BOARD_HOME + np.array([0, 0, 0.09])
+        strip_high = self.cfg.board_home + np.array([0, 0, 0.09])
         site_high, axes_vert = self.left_pose_for_strip(strip_high, R_vert)
         q_high, e, a = self.left.solve(data, site_high, axes=axes_vert, q_init=q_mid)
-        print(f"IK 左臂回放高位: 误差 {e*1000:.1f}mm/{a:.1f}°")
+        self.log(f"IK 左臂回放高位: 误差 {e*1000:.1f}mm/{a:.1f}°")
         self.move_joint(self.left, q_high, 2.2)
         self.dwell(0.4)
 
@@ -424,11 +449,11 @@ class FullDemo:
         # 用实时板位误差修正后缓慢下插
         bp, _ = self.strip_pose()
         sp, _ = self.site_pose(self.left)
-        corr = ts.BOARD_HOME[:2] - bp[:2]
+        corr = self.cfg.board_home[:2] - bp[:2]
         target = sp + np.array([corr[0], corr[1], strip_z_ins - bp[2]])
         q_ins, e, a = self.left.solve(data, target, axes=axes_vert,
                                       q_init=self.left.q_now(data))
-        print(f"IK 左臂插槽位: 误差 {e*1000:.1f}mm/{a:.1f}°（水平修正 {np.round(corr*1000,1)}mm，"
+        self.log(f"IK 左臂插槽位: 误差 {e*1000:.1f}mm/{a:.1f}°（水平修正 {np.round(corr*1000,1)}mm，"
               f"剩板长 {remain_x*1000:.0f}mm）")
         self.move_joint(self.left, q_ins, 2.4)
         self.dwell(0.3)
@@ -444,32 +469,37 @@ class FullDemo:
         self.dwell(0.8)
 
         bp, bR = self.strip_pose()
-        ok = (np.linalg.norm(bp[:2] - ts.BOARD_HOME[:2]) < 0.025
-              and bp[2] < ts.BOARD_HOME[2] + 0.015 and bR[2, 0] < -0.9)
-        print(f"剩板最终位置 {np.round(bp, 3)}（目标 {np.round(ts.BOARD_HOME, 3)}）"
-              f" -> {'√ 已插回盒 A' if ok else '× 未插回盒 A'}")
+        ok = (np.linalg.norm(bp[:2] - self.cfg.board_home[:2]) < 0.025
+              and bp[2] < self.cfg.board_home[2] + 0.015 and bR[2, 0] < -0.9)
+        self.log(f"剩板最终位置 {np.round(bp, 3)}（目标 {np.round(self.cfg.board_home, 3)}）"
+                 f" -> {'√ 已插回盒 A' if ok else '× 未插回盒 A'}")
         return ok
 
     # ---------- 主流程 ----------
     def run(self):
         self.reset()
-        self.cams.MAIN = "room"      # 行驶阶段用房间全景机位
-        self.dwell(0.6)
-        self.drive_to_work()
-        self.cams.MAIN = "follow_pack"
+        if not self.skip_drive:
+            if self.cams is not None:
+                self.cams.MAIN = "room"      # 行驶阶段用房间全景机位
+            self.dwell(0.6)
+            self.drive_to_work()
+        if self.cams is not None:
+            self.cams.MAIN = "follow_pack"
+        self.dwell(0.5)
         self.pick_board()
         results = self.tear_segments()
         returned = self.return_board()
 
         n_ok = sum(ok for _, ok in results)
-        print(f"总结: 撕剪入盒 B {n_ok}/{len(results)}，剩板放回盒 A {'成功' if returned else '失败'}")
+        self.log(f"总结: 撕剪入盒 B {n_ok}/{len(results)}，剩板放回盒 A {'成功' if returned else '失败'}")
 
-        self.writer.close()
-        print(f"视频: {self.video_path}（{self.n_frames} 帧, {self.n_frames/FPS:.1f} s）")
-        self.cams.close()
-        if self.live is not None:
-            self.live.close()
-        self.plot_load()
+        if self.writer is not None:
+            self.writer.close()
+            self.log(f"视频: {self.video_path}（{self.n_frames} 帧, {self.n_frames/FPS:.1f} s）")
+            self.cams.close()
+            if self.live is not None:
+                self.live.close()
+            self.plot_load()
         return n_ok, returned
 
     def plot_load(self):
@@ -499,7 +529,7 @@ class FullDemo:
         ax.grid(alpha=0.3)
         fig.tight_layout()
         fig.savefig(IMAGE_DIR / "pill_full_v5_load.png")
-        print(f"载荷曲线: {IMAGE_DIR / 'pill_full_v5_load.png'}")
+        self.log(f"载荷曲线: {IMAGE_DIR / 'pill_full_v5_load.png'}")
 
 
 if __name__ == "__main__":

@@ -12,6 +12,7 @@
     ../../.venv/Scripts/python.exe tear_scene.py
 """
 
+from dataclasses import dataclass
 from pathlib import Path
 
 import mujoco
@@ -57,6 +58,43 @@ BOARD_HOME = np.array([BOX_A_CENTER[0], BOX_A_CENTER[1],
 
 BOX_B_CENTER = np.array([0.16, 0.14, 0.0])
 BOX_B_HX, BOX_B_HY, BOX_B_WALL_H = 0.09, 0.075, 0.03
+
+
+# ---------- 场景配置与域随机化 ----------
+@dataclass
+class SceneCfg:
+    """一次实验的场景实例参数（世界系）。默认值 = v5 标称布局。"""
+    box_a_xy: tuple = (BOX_A_CENTER[0], BOX_A_CENTER[1])
+    box_b_xy: tuple = (BOX_B_CENTER[0], BOX_B_CENTER[1])
+    base_start: tuple = (BASE_START[0], BASE_START[1], BASE_START[2])
+    base_work: tuple = (BASE_WORK[0], BASE_WORK[1], BASE_WORK[2])
+    target_seg: tuple = (3, 0)     # 要撕的目标格 (col, row)
+
+    @property
+    def box_a_center(self):
+        return np.array([self.box_a_xy[0], self.box_a_xy[1], 0.0])
+
+    @property
+    def box_b_center(self):
+        return np.array([self.box_b_xy[0], self.box_b_xy[1], 0.0])
+
+    @property
+    def board_home(self):
+        return np.array([self.box_a_xy[0], self.box_a_xy[1],
+                         BOX_A_FLOOR_TOP + BOARD_XMAX + 0.002])
+
+
+def sample_cfg(rng, level=1.0):
+    """域随机化采样：盒位、停车位姿、目标格。level 缩放扰动幅度（0=标称）。"""
+    yaw_amp = np.radians(2.5) * level
+    return SceneCfg(
+        box_a_xy=tuple(BOX_A_CENTER[:2] + rng.uniform(-0.02, 0.02, 2) * level),
+        box_b_xy=tuple(BOX_B_CENTER[:2] + rng.uniform(-0.03, 0.03, 2) * level),
+        base_work=(BASE_WORK[0] + rng.uniform(-0.015, 0.015) * level,
+                   BASE_WORK[1] + rng.uniform(-0.015, 0.015) * level,
+                   rng.uniform(-yaw_amp, yaw_amp)),
+        target_seg=(3, int(rng.integers(2))),   # 自由端两格随机（中间格需顺序规划，后续）
+    )
 
 
 def seg_name(col, row):
@@ -115,14 +153,20 @@ def robot_xml():
             parts.append(f'<geom type="cylinder" size="0.075 0.030" '
                          f'pos="{sx * 0.22} {sy * 0.14 - 0.02} -0.675" quat="0.7071 0.7071 0 0" '
                          f'contype="0" conaffinity="0" mass="1.5" rgba="0.12 0.12 0.13 1"/>')
+    # 头部观测相机（机载，随车运动——策略学习用的主观测，真机可同位安装）
+    parts.append('<geom type="box" size="0.03 0.02 0.04" pos="0 -0.10 0.52" '
+                 'contype="0" conaffinity="0" mass="0.3" rgba="0.2 0.2 0.22 1"/>')
+    parts.append('<camera name="head_cam" pos="0 -0.08 0.55" xyaxes="1 0 0 0 0.86 0.51" '
+                 'fovy="70"/>')
     return "\n".join("      " + p for p in parts)
 
 
-def boxes_xml():
+def boxes_xml(cfg=None):
     """固定桌面上的盒 A（插板架 + 装饰板）与盒 B（药片盒），世界坐标。"""
+    cfg = cfg or SceneCfg()
     parts = []
     # 盒 A：3 槽插板架
-    ax, ay = BOX_A_CENTER[0], BOX_A_CENTER[1]
+    ax, ay = cfg.box_a_xy
     inner_hx = 1.5 * SLOT_PITCH + SLOT_WALL_T
     parts.append(f'<geom name="boxa_bottom" type="box" size="{inner_hx + 0.006} {BOX_A_HY + 0.006} 0.003" '
                  f'pos="{ax} {ay} 0.003" rgba="0.55 0.42 0.30 1"/>')
@@ -145,7 +189,7 @@ def boxes_xml():
                      f'contype="0" conaffinity="0" rgba="0.3 0.35 0.45 1"/>')
 
     # 盒 B：药片盒
-    bx, by = BOX_B_CENTER[0], BOX_B_CENTER[1]
+    bx, by = cfg.box_b_xy
     parts.append(f'<geom name="boxb_bottom" type="box" size="{BOX_B_HX} {BOX_B_HY} 0.0015" '
                  f'pos="{bx} {by} 0.0015" rgba="0.30 0.55 0.75 1"/>')
     for sx, sy, hx, hy in ((1, 0, 0.003, BOX_B_HY), (-1, 0, 0.003, BOX_B_HY),
@@ -157,17 +201,18 @@ def boxes_xml():
     return "\n".join("    " + p for p in parts)
 
 
-def build_xml():
-    """生成完整场景 XML 字符串。
+def build_xml(cfg=None):
+    """生成完整场景 XML 字符串（cfg 控制盒位等域随机化参数）。
 
     药板初始竖插在固定桌上盒 A 的中间槽（焊接 relpose 取 qpos0，
     整板任意全局位姿不影响格间刚性布局）。
     """
+    cfg = cfg or SceneCfg()
     R0 = _quat_to_mat(BOARD_UP_QUAT)
     quat_str = " ".join(f"{q:.7f}" for q in BOARD_UP_QUAT)
 
     # 药板：strip 自由体，初始在固定桌上的盒 A 槽中
-    strip_p = BOARD_HOME
+    strip_p = cfg.board_home
     bodies = [f"""
     <body name="strip" pos="{strip_p[0]:.6f} {strip_p[1]:.6f} {strip_p[2]:.6f}" quat="{quat_str}">
       <freejoint name="strip_joint"/>
@@ -225,7 +270,7 @@ def build_xml():
     <camera name="follow_pack" mode="targetbody" target="strip" pos="0.55 -0.55 0.45"/>
     <camera name="side" pos="-0.75 -0.35 0.40" xyaxes="0.5165 -0.8563 0.0000 0.2453 0.1480 0.9581"/>
     <camera name="room" mode="targetbody" target="mobile_base" pos="1.55 -1.60 0.90"/>
-{boxes_xml()}
+{boxes_xml(cfg)}
 {''.join(bodies)}
   </worldbody>
 
@@ -235,8 +280,8 @@ def build_xml():
 </mujoco>"""
 
 
-def load_model():
-    return mujoco.MjModel.from_xml_string(build_xml())
+def load_model(cfg=None):
+    return mujoco.MjModel.from_xml_string(build_xml(cfg))
 
 
 def place_segments(model, data):
