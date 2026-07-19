@@ -37,6 +37,11 @@ powershell -File ..\..\scripts\download_assets.ps1
 | `inspect_refine_case.py` | 成功案例解剖：重放指定配对组，打印脚本失败方式与 RL 每个相位的修正量 |
 | `collect_teacher_demos.py` | RL 教师生成蒸馏演示（学生观测格式 HDF5，物理随机化 + 偏移截幅，失败丢弃） |
 | `record_compare.py` | 同屏对比视频：同一（场景+物理参数）下零动作脚本 vs RL 修正，左右分屏 + 结果印章 |
+| `collect_rollouts.py` | ACT 自跑 rollout 采数据（含失败 + 特权进度标签），世界模型训练集，产物在 `rollouts/`（不入库） |
+| `train_wm.py` | 动作条件世界模型：(观测, 动作块) → Δ进度 / 失败概率 / 未来 qpos，支持 `--holdout` 留出集 |
+| `eval_act_wm.py` | ACT+WM 提议-把关评测（K 候选 + 保守门控），`--no-gate` 为纯 ACT 对照 |
+| `diagnose_wm.py` | WM 判别力诊断：成败分离度 / 候选评分展布 |
+| `wm_alarm_analysis.py` | WM 作为安全监控器：留出集失败预警召回/误报/提前量 + 轨迹图 |
 | `demo_to_video.py` | 把一条 HDF5 演示合成三机位视频（数据样例可视化） |
 | `wait_and_train.ps1` | 接力脚本：等采集进程结束自动启动训练（规避页面文件不足） |
 | `tear_scene.py` | v5 场景构建：机器人车体几何 + 固定桌上的盒 A/盒 B + 自由体药板（8 格 + 12 条焊接易撕线）+ 底盘工具函数（直接运行可探测/渲染静帧） |

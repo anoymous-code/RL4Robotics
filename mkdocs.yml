@@ -98,6 +98,7 @@ nav:
       - 选型初探: hardware/index.md
   - 学习日志:
       - 日志索引: journal/index.md
+      - "2026-07-19 (下) · ACT+世界模型": journal/2026-07-19-wm.md
       - "2026-07-19 · 蒸馏首战：负迁移复盘": journal/2026-07-19-distill.md
       - "2026-07-18 (深夜) · RL 精修 40%→92%": journal/2026-07-18-rl.md
       - "2026-07-18 (夜) · 首个学习策略 75%": journal/2026-07-18-result.md
