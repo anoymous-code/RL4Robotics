@@ -28,7 +28,7 @@ powershell -File ..\..\scripts\download_assets.ps1
 | `pill_env.py` | Gymnasium 环境：reset 域随机化，动作 14 维（双臂+爪），观测 = qpos + 机载三相机图像 |
 | `collect_demos.py` | 脚本专家自动采集演示数据（ACT 风格 HDF5，含成功率统计），产物在 `demos/`（不入库） |
 | `train_act.py` | ACT-lite 模仿学习训练（ResNet18 + Transformer 动作分块，L1 损失，AMP），产出 `ckpt/` 与训练曲线 |
-| `eval_act.py` | 策略评测：随机场景 rollout 成功率 + 四视角视频 |
+| `eval_act.py` | 策略评测：随机场景 rollout 成功率（规范撕剪/敲断口径拆分）+ 四视角视频，`--strict` 严格物理档 |
 | `tear_refine_env.py` | RL 精修环境：撕剪-投放子任务（semi-MDP 相位级修正动作 + 物理随机化 + 特权观测），`--gen-pool` 生成重置池 / `--smoke` 一致性检查 / `--baseline` 脚本基线 |
 | `train_ppo_refine.py` | PPO 训练相位级修正策略（SB3，8 并行环境，CPU） |
 | `eval_refine.py` | 配对评测：同一批（场景×物理参数）对比零动作脚本 vs RL 策略，可录四视角视频 |
