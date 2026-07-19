@@ -131,7 +131,10 @@ class FullDemo:
 
     def __init__(self, live=False, latch=True, cfg=None, skip_drive=False,
                  targets=None, recorder=None, make_video=True, verbose=True,
-                 action_noise=0.0):
+                 action_noise=0.0, strict_tear=False):
+        # strict_tear：断裂要求"双指同时夹触目标格 + 载荷连续 3 步超阈值"
+        # （规范撕剪物理，与 RL 精修环境一致）；False 为旧规则（纯载荷阈值）
+        self.strict_tear = strict_tear
         self.cfg = cfg or ts.SceneCfg()
         self.latch = latch
         self.skip_drive = skip_drive
@@ -298,11 +301,28 @@ class FullDemo:
                    if (data.contact[i].geom1 == plate and model.geom_bodyid[data.contact[i].geom2] in fb)
                    or (data.contact[i].geom2 == plate and model.geom_bodyid[data.contact[i].geom1] in fb))
 
-    # ---------- 载荷监控 ----------
-    def make_watcher(self, target_welds):
+    def finger_touch_count(self, seg):
+        """右爪两指中与目标格接触的手指数（0/1/2，双指=规范夹持）。"""
         model, data = self.model, self.data
+        plate = model.geom(f"{seg}_plate").id
+        fb = (model.body("right/left_finger_link").id,
+              model.body("right/right_finger_link").id)
+        touched = set()
+        for i in range(data.ncon):
+            g1, g2 = data.contact[i].geom1, data.contact[i].geom2
+            if g1 == plate and model.geom_bodyid[g2] in fb:
+                touched.add(model.geom_bodyid[g2])
+            elif g2 == plate and model.geom_bodyid[g1] in fb:
+                touched.add(model.geom_bodyid[g1])
+        return len(touched)
+
+    # ---------- 载荷监控 ----------
+    def make_watcher(self, target_welds, seg=None):
+        model, data = self.model, self.data
+        over_cnt = {}
 
         def watch():
+            gripped2 = (self.finger_touch_count(seg) >= 2) if seg else True
             for w in target_welds:
                 if w in self.broken:
                     continue
@@ -310,12 +330,21 @@ class FullDemo:
                 self.load_log["t"].append(self.t)
                 self.load_log["load"].append(load)
                 self.load_log["weld"].append(w)
-                if load >= TEAR_LOAD:
-                    model.eq_active0[model.equality(w).id] = 0
-                    data.eq_active[model.equality(w).id] = 0
-                    self.broken.add(w)
-                    self.breaks.append((self.t, w, load))
-                    self.log(f"[t={self.t:6.2f}s] 易撕线 {w} 断裂（载荷 {load:.1f}）")
+                if self.strict_tear:
+                    # 规范撕剪物理：双指夹持 + 载荷连续 3 步超阈值才断
+                    if load >= TEAR_LOAD and gripped2:
+                        over_cnt[w] = over_cnt.get(w, 0) + 1
+                    else:
+                        over_cnt[w] = 0
+                    if over_cnt.get(w, 0) < 3:
+                        continue
+                elif load < TEAR_LOAD:
+                    continue
+                model.eq_active0[model.equality(w).id] = 0
+                data.eq_active[model.equality(w).id] = 0
+                self.broken.add(w)
+                self.breaks.append((self.t, w, load))
+                self.log(f"[t={self.t:6.2f}s] 易撕线 {w} 断裂（载荷 {load:.1f}）")
 
         return watch
 
@@ -417,14 +446,16 @@ class FullDemo:
         for idx, (col, row) in enumerate(self.targets):
             seg = ts.seg_name(col, row)
             target_welds = [w for w in ts.weld_names_of(col, row) if w not in self.broken]
-            watch = self.make_watcher(target_welds)
+            watch = self.make_watcher(target_welds, seg=seg)
             self.log(f"—— 目标 {idx+1}: {seg}，需断开易撕线 {target_welds} ——")
 
             R_tear = axes_rot(AXES_TEAR)
+            # 规范撕剪（strict）需要双指稳定夹持，咬合加深一档提高容错
+            overlap = EDGE_OVERLAP + (0.001 if self.strict_tear else 0.0)
 
             def site_target():
                 seg_pos = self.sense_body_pos(seg)
-                grasp = seg_pos + np.array([ts.SEG_HX - EDGE_OVERLAP, 0, 0])
+                grasp = seg_pos + np.array([ts.SEG_HX - overlap, 0, 0])
                 return grasp - R_tear @ PADS_LOCAL
 
             data.ctrl[self.right_grip] = GRIP_OPEN
@@ -440,7 +471,26 @@ class FullDemo:
             self.move_joint(self.right, q_grasp, 1.2)
             self.close_gripper(self.right_grip, GRIP_CLOSE_R)
             self.dwell(0.3)
-            self.log(f"[t={self.t:6.2f}s] 闭爪后指间接触点: {self.grasp_contacts(seg)}")
+            # 抓取自检：规范撕剪要求双指同时夹触格缘；执行噪声导致的
+            # 浅抓在此重试（重抓行为会录进演示——教学生"抓不稳就重来"）
+            if self.strict_tear:
+                for retry in range(2):
+                    if self.finger_touch_count(seg) >= 2:
+                        break
+                    self.log(f"[t={self.t:6.2f}s] 抓取自检未过（双指={self.finger_touch_count(seg)}），重抓 #{retry+1}")
+                    data.ctrl[self.right_grip] = GRIP_OPEN
+                    self.dwell(0.3)
+                    q_re, _, _ = self.right.solve(data, pre, axes=AXES_TEAR,
+                                                  q_init=self.right.q_now(data))
+                    self.move_joint(self.right, q_re, 1.0)
+                    self.dwell(0.2)
+                    q_grasp, _, _ = self.right.solve(data, site_target(),
+                                                     axes=AXES_TEAR, q_init=q_re)
+                    self.move_joint(self.right, q_grasp, 1.0)
+                    self.close_gripper(self.right_grip, GRIP_CLOSE_R)
+                    self.dwell(0.3)
+            self.log(f"[t={self.t:6.2f}s] 闭爪后指间接触点: {self.grasp_contacts(seg)}"
+                     f"（双指 {self.finger_touch_count(seg) >= 2}）")
 
             # 缓慢扭转撕剪，断裂即停；必要时补一段下拉
             wrist_act = model.actuator("right/wrist_rotate").id

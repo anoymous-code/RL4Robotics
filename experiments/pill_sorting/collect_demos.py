@@ -77,7 +77,7 @@ class DemoRecorder:
 
 
 def collect(n_episodes, seed=0, rand_level=1.0, verbose=False, start=0,
-            action_noise=0.004):
+            action_noise=0.004, prefix="episode", strict_tear=False):
     rng = np.random.default_rng(seed)
     results = []
     for k in range(n_episodes):
@@ -85,7 +85,8 @@ def collect(n_episodes, seed=0, rand_level=1.0, verbose=False, start=0,
         cfg = ts.sample_cfg(rng, rand_level)
         t0 = time.time()
         demo = FullDemo(cfg=cfg, skip_drive=True, targets=[tuple(cfg.target_seg)],
-                        make_video=False, verbose=verbose, action_noise=action_noise)
+                        make_video=False, verbose=verbose, action_noise=action_noise,
+                        strict_tear=strict_tear)
         recorder = DemoRecorder(demo.model)
         demo.recorder = recorder
         try:
@@ -96,7 +97,7 @@ def collect(n_episodes, seed=0, rand_level=1.0, verbose=False, start=0,
             success, n_ok, returned = False, 0, False
         wall = time.time() - t0
         tag = "ok" if success else "fail"
-        path = DEMO_DIR / f"episode_{ep:03d}_{tag}.hdf5"
+        path = DEMO_DIR / f"{prefix}_{ep:03d}_{tag}.hdf5"
         recorder.save(path, cfg, success)
         recorder.close()
         results.append(success)
@@ -120,6 +121,9 @@ if __name__ == "__main__":
     parser.add_argument("--rand", type=float, default=1.0, help="域随机化幅度 0~1")
     parser.add_argument("--start", type=int, default=0, help="起始编号（续采时避免覆盖）")
     parser.add_argument("--verbose", action="store_true")
+    parser.add_argument("--prefix", type=str, default="episode", help="输出文件名前缀")
+    parser.add_argument("--strict", action="store_true",
+                        help="规范撕剪物理：断裂需双指夹持 + 连续超阈值")
     args = parser.parse_args()
     collect(args.n, seed=args.seed, rand_level=args.rand, verbose=args.verbose,
-            start=args.start)
+            start=args.start, prefix=args.prefix, strict_tear=args.strict)

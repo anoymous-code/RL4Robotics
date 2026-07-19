@@ -68,11 +68,14 @@ class PillTearEnv(gym.Env):
     metadata = {"render_modes": ["rgb_array"], "render_fps": CTRL_HZ}
 
     def __init__(self, seed=None, rand_level=1.0, image_obs=True,
-                 max_secs=60.0):
+                 max_secs=60.0, strict_grip=False):
         super().__init__()
         self.rng = np.random.default_rng(seed)
         self.rand_level = rand_level
         self.image_obs = image_obs
+        # strict_grip=True：断裂前提"边界受夹"要求双指同时接触（规范撕剪物理，
+        # 堵死"单指敲断"）；False 保持旧物理（兼容在旧物理下采集/训练的策略）
+        self.strict_grip = strict_grip
         self.max_steps = int(max_secs * CTRL_HZ)
         self.cfg = None
         self.model = None
@@ -134,6 +137,7 @@ class PillTearEnv(gym.Env):
                        for w in ts.weld_names_of(*self.cfg.target_seg)]
         self._aws = set(self._welds)
         self._over_cnt = {}
+        self._tear_events = []   # 每次断裂事件：是否双指夹持（过程质量口径）
         self._latched = False
         self._tab_geom = model.geom("strip_tab").id
         self._seg_geom = model.geom(f"{ts.seg_name(*self.cfg.target_seg)}_plate").id
@@ -165,20 +169,26 @@ class PillTearEnv(gym.Env):
             ts.release_latch(model, data)
             self._latched = False
 
-    def _seg_gripped(self):
-        """右手指是否夹触目标格板缘（任一指接触即可）。
-
-        注意：RL 精修环境（TearRefineEnv）用的是更严格的"双指同时接触"
-        规则以封堵 reward hacking；此处保持单指规则，与采集演示时
-        脚本专家的物理（纯载荷阈值断裂）一致——ACT 的训练分布建立在
-        该物理上，评测环境不能事后改规则。"""
+    def _finger_touch_count(self):
+        """右爪两根手指中与目标格板接触的手指数（0/1/2）。"""
         model, data = self.model, self.data
+        touched = set()
         for i in range(data.ncon):
             g1, g2 = data.contact[i].geom1, data.contact[i].geom2
-            if ((g1 == self._seg_geom and model.geom_bodyid[g2] in self._rfinger_bodies)
-                    or (g2 == self._seg_geom and model.geom_bodyid[g1] in self._rfinger_bodies)):
-                return True
-        return False
+            if g1 == self._seg_geom and model.geom_bodyid[g2] in self._rfinger_bodies:
+                touched.add(model.geom_bodyid[g2])
+            elif g2 == self._seg_geom and model.geom_bodyid[g1] in self._rfinger_bodies:
+                touched.add(model.geom_bodyid[g1])
+        return len(touched)
+
+    def _seg_gripped(self):
+        """断裂前提"边界受夹"是否成立。
+
+        strict_grip=True 要求双指同时接触（规范撕剪，与 RL 精修环境一致）；
+        False 为旧物理（任一指接触即可，兼容旧数据训练的策略——评测
+        环境不能对着旧策略事后改规则，实测改了 ACT v1 从 75% 跌 20%）。"""
+        n = self._finger_touch_count()
+        return n >= (2 if self.strict_grip else 1)
 
     def _check_tears(self):
         """易撕线断裂：仅当右爪夹住目标格且载荷连续 TEAR_HOLD 步超阈值。
@@ -203,6 +213,9 @@ class PillTearEnv(gym.Env):
                     self.model.eq_active0[e] = 0
                     data.eq_active[e] = 0
                     self._active_weld_set.discard(e)
+                    # 过程质量记录：断裂瞬间是否双指规范夹持（"撕"）
+                    # 还是单指压击（"敲"）——统计口径用，不影响物理
+                    self._tear_events.append(self._finger_touch_count() >= 2)
             else:
                 self._over_cnt[e] = 0
 
@@ -222,7 +235,9 @@ class PillTearEnv(gym.Env):
         reward = float(seg_ok) + float(seg_ok and board_ok)
         terminated = bool(seg_ok and board_ok)
         truncated = self._step_count >= self.max_steps
-        info = {"seg_in_box_b": seg_ok, "board_returned": seg_ok and board_ok}
+        info = {"seg_in_box_b": seg_ok, "board_returned": seg_ok and board_ok,
+                # 规范撕剪 = 所有断裂事件都在双指夹持下发生（"撕"而非"敲"）
+                "clean_tear": bool(self._tear_events) and all(self._tear_events)}
         return self._obs(), reward, terminated, truncated, info
 
     # ---------- 观测与判定 ----------

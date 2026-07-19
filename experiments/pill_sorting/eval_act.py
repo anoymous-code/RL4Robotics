@@ -92,11 +92,11 @@ def rollout(env, policy, video_path=None, seed=None, phys=None):
     return last_info
 
 
-def main(n, ckpt, video, phys_level=0.0, tag="act"):
-    env = PillTearEnv(seed=1234)
+def main(n, ckpt, video, phys_level=0.0, tag="act", strict=False):
+    env = PillTearEnv(seed=1234, strict_grip=strict)
     policy = ActPolicy(HERE / "ckpt" / ckpt)
     phys_rng = np.random.default_rng(777)   # 物理参数序列与 seed 解耦，档间可配对
-    n_seg, n_full = 0, 0
+    n_seg = n_full = n_clean = 0
     for ep in range(n):
         phys = None
         if phys_level > 0:
@@ -108,14 +108,19 @@ def main(n, ckpt, video, phys_level=0.0, tag="act"):
         if video and ep < 1:   # 四视角高清视频体积大，只录代表性一条
             vp = VIDEO_DIR / f"{tag}_rollout_{ep}.mp4"
         info = rollout(env, policy, video_path=vp, seed=10000 + ep, phys=phys)
-        n_seg += bool(info.get("seg_in_box_b"))
+        seg_ok = bool(info.get("seg_in_box_b"))
+        clean = seg_ok and bool(info.get("clean_tear"))
+        n_seg += seg_ok
         n_full += bool(info.get("board_returned"))
+        n_clean += clean
         extra = (f" fric {phys['fric']:.2f} mass {phys['mass']:.2f} "
                  f"thr {phys['thresh']:.2f}") if phys else ""
-        print(f"[ep {ep:02d}] 撕剪入盒 B: {info.get('seg_in_box_b')}, "
+        quality = ("规范撕剪" if clean else "敲断" if seg_ok else "-")
+        print(f"[ep {ep:02d}] 撕剪入盒 B: {seg_ok} ({quality}), "
               f"全流程: {info.get('board_returned')}{extra}"
               + (f" 视频 {vp}" if vp else ""), flush=True)
-    print(f"\n成功率: 撕剪入盒 B {n_seg}/{n}, 全流程 {n_full}/{n}")
+    print(f"\n成功率: 撕剪入盒 B {n_seg}/{n}（其中规范撕剪 {n_clean}, "
+          f"敲断 {n_seg - n_clean}）, 全流程 {n_full}/{n}")
     env.close()
 
 
@@ -127,5 +132,8 @@ if __name__ == "__main__":
     parser.add_argument("--phys", type=float, default=0.0,
                         help="物理随机化档位（摩擦/质量/断裂阈值，0=标称）")
     parser.add_argument("--tag", type=str, default="act", help="视频文件名前缀")
+    parser.add_argument("--strict", action="store_true",
+                        help="严格物理评测：断裂需双指夹持（配严格数据训练的策略）")
     args = parser.parse_args()
-    main(args.n, args.ckpt, args.video, phys_level=args.phys, tag=args.tag)
+    main(args.n, args.ckpt, args.video, phys_level=args.phys, tag=args.tag,
+         strict=args.strict)

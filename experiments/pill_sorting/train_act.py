@@ -127,8 +127,8 @@ class ACTLite(nn.Module):
 
 # ---------------- 训练 ----------------
 def train(steps, batch, lr=1e-4, out_tag="act", max_files=None,
-          teacher_repeat=0):
-    files = sorted(DEMO_DIR.glob("episode_*_ok.hdf5"))
+          teacher_repeat=0, prefix="episode"):
+    files = sorted(DEMO_DIR.glob(f"{prefix}_*_ok.hdf5"))
     if max_files:
         files = files[:max_files]
     assert files, "没有演示数据，先运行 collect_demos.py"
@@ -216,6 +216,9 @@ if __name__ == "__main__":
     parser.add_argument("--out-tag", type=str, default="act")
     parser.add_argument("--teacher-repeat", type=int, default=0,
                         help="混入 teacher_*_ok.hdf5 并重复 N 次（DAgger 蒸馏）")
+    parser.add_argument("--prefix", type=str, default="episode",
+                        help="演示文件名前缀（strict = 规范撕剪物理数据）")
     args = parser.parse_args()
     train(args.steps, args.batch, args.lr, out_tag=args.out_tag,
-          max_files=args.max_files, teacher_repeat=args.teacher_repeat)
+          max_files=args.max_files, teacher_repeat=args.teacher_repeat,
+          prefix=args.prefix)
