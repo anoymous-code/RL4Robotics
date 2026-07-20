@@ -27,8 +27,9 @@ powershell -File ..\..\scripts\download_assets.ps1
 | `run_full_demo.py` | **v5 主演示 / 脚本专家**：导航到桌前 → 取板 → 撕剪 → 入盒 B → 放回盒 A（支持 `SceneCfg` 域随机化、跳导航、录制钩子）。流程拆为「衔接控制段 + 4 个原语窗口」，原语窗口可被学习策略替换（`primitive_impls`） |
 | `primitives.py` | **操作原语层**：原语规格（执行臂/相机/动作切片/时限）、出口谓词、入口状态快照/恢复、`PrimitiveSession` 单臂执行会话；`--gen` 生成原语入口状态池 / `--smoke` 恢复一致性检查 |
 | `train_prim.py` | 原语 BC 训练：按 `/phase` 切分演示 + 原语级成功筛选（`prim_ok`），单臂 7 维动作 / 单腕相机 480x640（特征网格 15x20 不池化） |
-| `eval_prim.py` | 原语级评测：入口状态池起步 + 出口谓词计分，`--scripted` 脚本原语基线对照 |
-| `run_primitives.py` | **原语分解编排器**：脚本衔接段 + 学习原语 + 原语级重试的全流程评测，`--prims` 选择替换哪些原语（`none` = 纯脚本对照） |
+| `eval_prim.py` | 原语级评测：入口状态池起步 + 出口谓词计分，`--scripted` 脚本原语基线对照，成功/失败案例各录四视角视频 |
+| `run_primitives.py` | **原语分解编排器**：脚本衔接段 + 学习原语 + 原语级重试的全流程评测与成败视频，`--prims` 选择替换哪些原语（`none` = 纯脚本对照），`--ckpt prim=file` 覆盖检查点 |
+| `collect_prim_demos.py` | 原语级补数据：入口状态池直采单原语演示片段（DART 噪声，成本 = 原语时长而非全流程），`train_prim.py --prefix "prim,boost_..."` 合并训练 |
 | `pill_env.py` | Gymnasium 环境：reset 域随机化，动作 14 维（双臂+爪），观测 = qpos + 机载三相机图像 |
 | `collect_demos.py` | 脚本专家自动采集演示数据（ACT 风格 HDF5 + `/phase` 相位标签 + 原语级成功标注），产物在 `demos/`（不入库）；`--wrist-only` 双腕相机 / `--entry-jitter` 衔接段到位抖动 |
 | `train_act.py` | ACT-lite 模仿学习训练（ResNet18 + Transformer 动作分块，L1 损失，AMP），产出 `ckpt/` 与训练曲线 |
@@ -46,10 +47,6 @@ powershell -File ..\..\scripts\download_assets.ps1
 | `eval_act_wm.py` | ACT+WM 提议-把关评测（K 候选 + 保守门控），`--no-gate` 为纯 ACT 对照 |
 | `diagnose_wm.py` | WM 判别力诊断：成败分离度 / 候选评分展布 |
 | `wm_alarm_analysis.py` | WM 作为安全监控器：留出集失败预警召回/误报/提前量 + 轨迹图 |
-| `primitives.py` | 操作原语层：规格/出口谓词/入口状态池（`--gen`）/快照恢复会话 |
-| `train_prim.py` | 单原语 ACT 训练（单臂 7 维动作、单腕相机 480×640、15×20 特征网格） |
-| `eval_prim.py` | 单原语评测：入口池起步 + 出口谓词计分，成功/失败案例各录四视角视频 |
-| `run_primitives.py` | 编排器：脚本衔接段 + 学习原语 + 原语级重试，全流程评测与成败视频 |
 | `demo_to_video.py` | 把一条 HDF5 演示合成三机位视频（数据样例可视化） |
 | `wait_and_train.ps1` | 接力脚本：等采集进程结束自动启动训练（规避页面文件不足） |
 | `tear_scene.py` | v5 场景构建：机器人车体几何 + 固定桌上的盒 A/盒 B + 自由体药板（8 格 + 12 条焊接易撕线）+ 底盘工具函数（直接运行可探测/渲染静帧） |
