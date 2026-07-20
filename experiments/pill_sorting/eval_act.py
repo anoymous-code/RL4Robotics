@@ -39,18 +39,20 @@ def jpeg_roundtrip(img, quality=60):
 
 
 class ActPolicy:
-    def __init__(self, ckpt_path, device="cuda"):
+    def __init__(self, ckpt_path, device="cuda", jpeg_q=60):
         ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
         self.model = ACTLite().to(device).eval()
         self.model.load_state_dict(ckpt["model"])
         self.stats = {k: np.array(v, dtype=np.float32) for k, v in ckpt["stats"].items()}
         self.device = device
+        self.jpeg_q = jpeg_q     # 与训练数据的 JPEG 质量对齐（hires 数据为 50）
         print(f"载入 {ckpt_path}（训练步数 {ckpt.get('step')}）")
 
     @torch.no_grad()
     def predict_chunk(self, obs, target_row=0):
         imgs = np.stack([
-            ((jpeg_roundtrip(obs[cam]).astype(np.float32) / 255.0) - IMG_MEAN) / IMG_STD
+            ((jpeg_roundtrip(obs[cam], self.jpeg_q).astype(np.float32) / 255.0)
+             - IMG_MEAN) / IMG_STD
             for cam in CAMS]).transpose(0, 3, 1, 2)
         qpos = (obs["qpos"].astype(np.float32) - self.stats["qpos_mean"]) / self.stats["qpos_std"]
         imgs_t = torch.from_numpy(imgs).unsqueeze(0).to(self.device)
@@ -94,9 +96,10 @@ def rollout(env, policy, video_path=None, seed=None, phys=None,
 
 
 def main(n, ckpt, video, phys_level=0.0, tag="act", strict=False,
-         exec_steps=EXEC_STEPS):
-    env = PillTearEnv(seed=1234, strict_grip=strict)
-    policy = ActPolicy(HERE / "ckpt" / ckpt)
+         exec_steps=EXEC_STEPS, hires=False):
+    env = PillTearEnv(seed=1234, strict_grip=strict,
+                      img_hw=(480, 640) if hires else (240, 320))
+    policy = ActPolicy(HERE / "ckpt" / ckpt, jpeg_q=50 if hires else 60)
     phys_rng = np.random.default_rng(777)   # 物理参数序列与 seed 解耦，档间可配对
     n_seg = n_full = n_clean = 0
     for ep in range(n):
@@ -139,6 +142,8 @@ if __name__ == "__main__":
                         help="严格物理评测：断裂需双指夹持（配严格数据训练的策略）")
     parser.add_argument("--exec-steps", type=int, default=EXEC_STEPS,
                         help="每次推理开环执行步数（小=更频繁重规划）")
+    parser.add_argument("--hires", action="store_true",
+                        help="高分辨率观测 480x640（配高分辨率数据训练的模型）")
     args = parser.parse_args()
     main(args.n, args.ckpt, args.video, phys_level=args.phys, tag=args.tag,
-         strict=args.strict, exec_steps=args.exec_steps)
+         strict=args.strict, exec_steps=args.exec_steps, hires=args.hires)

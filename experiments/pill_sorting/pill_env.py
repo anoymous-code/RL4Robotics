@@ -68,7 +68,7 @@ class PillTearEnv(gym.Env):
     metadata = {"render_modes": ["rgb_array"], "render_fps": CTRL_HZ}
 
     def __init__(self, seed=None, rand_level=1.0, image_obs=True,
-                 max_secs=60.0, strict_grip=False):
+                 max_secs=60.0, strict_grip=False, img_hw=(IMG_H, IMG_W)):
         super().__init__()
         self.rng = np.random.default_rng(seed)
         self.rand_level = rand_level
@@ -76,6 +76,9 @@ class PillTearEnv(gym.Env):
         # strict_grip=True：断裂前提"边界受夹"要求双指同时接触（规范撕剪物理，
         # 堵死"单指敲断"）；False 保持旧物理（兼容在旧物理下采集/训练的策略）
         self.strict_grip = strict_grip
+        # 观测分辨率：默认 240x320；高分辨率实验（毫米级抓取定位的
+        # 信息瓶颈检验）用 480x640，须与训练数据分辨率一致
+        self.img_hw = tuple(img_hw)
         self.max_steps = int(max_secs * CTRL_HZ)
         self.cfg = None
         self.model = None
@@ -86,7 +89,7 @@ class PillTearEnv(gym.Env):
         obs_dict = {"qpos": spaces.Box(-np.inf, np.inf, (14,), np.float64)}
         if image_obs:
             for cam in CAMS:
-                obs_dict[cam] = spaces.Box(0, 255, (IMG_H, IMG_W, 3), np.uint8)
+                obs_dict[cam] = spaces.Box(0, 255, (*self.img_hw, 3), np.uint8)
         self.observation_space = spaces.Dict(obs_dict)
         self.action_space = spaces.Box(-np.pi, np.pi, (14,), np.float64)
 
@@ -246,7 +249,8 @@ class PillTearEnv(gym.Env):
         obs = {"qpos": self.data.qpos[self.qpos_ids].copy()}
         if self.image_obs:
             if self.renderer is None:
-                self.renderer = mujoco.Renderer(self.model, height=IMG_H, width=IMG_W)
+                self.renderer = mujoco.Renderer(self.model, height=self.img_hw[0],
+                                                width=self.img_hw[1])
             for cam in CAMS:
                 self.renderer.update_scene(self.data, camera=cam)
                 obs[cam] = self.renderer.render().copy()

@@ -50,6 +50,10 @@ RIGHT_KP_SCALE = 8.0
 
 TEAR_TARGETS = [(3, 0), (3, 1)]  # 从自由端顺序撕：第 4 列前排、后排
 
+# 操作原语相位标签（transit = 原语之间的衔接控制段；顺序即 /phase 字段的整数 id）
+PHASE_NAMES = ("transit", "p1_grasp_board", "p2_tear_seg", "p3_place", "p4_insert")
+PHASE_IDS = {n: i for i, n in enumerate(PHASE_NAMES)}
+
 # 站点姿态（axes = [(站点局部轴, 世界方向), ...]）
 AXES_GRASP_DOWN = [(0, DOWN), (1, X)]    # 竖直向下抓手柄：指向下，开合轴沿板厚(x)
 AXES_HOLD = [(0, X), (1, UP)]            # 水平持板：指向 +x，开合轴竖直
@@ -127,14 +131,26 @@ class FullDemo:
     targets    要撕的格列表，None = 默认 [(3,0),(3,1)]，采数据传 [cfg.target_seg]；
     recorder   每个控制周期回调 recorder.tick(model, data)（演示数据录制钩子）；
     make_video 是否合成三机位 mp4（采数据时关掉省渲染）。
+
+    流程被拆成「衔接控制段 + 操作原语窗口」两类方法（原语分解架构）：
+        衔接段（自由空间运送，高精度 IK 编排）：
+            approach_board / lift_and_hold / approach_seg / transport_to_boxb /
+            retreat_right / approach_slot / retreat_and_judge
+        原语窗口（接触密集，脚本版；可被学习策略替换）：
+            grasp_board_scripted / tear_seg_scripted / place_scripted / insert_scripted
+    原语窗口内 self.phase_name != "transit"（采数据打相位标签、
+    生成原语入口状态池都靠它）。
     """
 
     def __init__(self, live=False, latch=True, cfg=None, skip_drive=False,
                  targets=None, recorder=None, make_video=True, verbose=True,
-                 action_noise=0.0, strict_tear=False):
+                 action_noise=0.0, strict_tear=False, entry_jitter=0.0):
         # strict_tear：断裂要求"双指同时夹触目标格 + 载荷连续 3 步超阈值"
         # （规范撕剪物理，与 RL 精修环境一致）；False 为旧规则（纯载荷阈值）
         self.strict_tear = strict_tear
+        # entry_jitter：衔接段到位目标的随机偏差半径 (m)，模拟真机上经典
+        # 控制交接原语时的定位误差（生成原语入口状态池 / 鲁棒性评测用）
+        self.entry_jitter = entry_jitter
         self.cfg = cfg or ts.SceneCfg()
         self.latch = latch
         self.skip_drive = skip_drive
@@ -182,10 +198,53 @@ class FullDemo:
         self.breaks = []
         self.broken = set()
         self.strip_in_site = None   # 抓稳后 strip 在左站点系中的位姿（滑移监控/放回规划）
+        # 原语分解接口：
+        #   phase_name       当前相位（"transit" 或 PHASE_NAMES 中的原语名）
+        #   primitive_hooks  {原语名: hook(demo, name, ctx)}，原语窗口入口调用
+        #                    （入口状态池快照等）
+        #   primitive_impls  {原语名: impl(demo, ctx)}，替换脚本原语体
+        #                    （编排器把学习策略插进来）
+        self.phase_name = "transit"
+        self.primitive_hooks = {}
+        self.primitive_impls = {}
 
     def log(self, msg):
         if self.verbose:
             print(msg)
+
+    # ---------- 原语分解接口 ----------
+    def run_primitive(self, name, scripted, ctx=None):
+        """执行一个原语窗口。
+
+        窗口内 phase_name = 原语名（录制打标）；入口先调注册的 hook
+        （入口状态池快照），出口调 "{name}/exit" hook（成功谓词打标）；
+        primitive_impls 里有注册实现（学习策略）则替换脚本体 scripted(ctx)。"""
+        ctx = ctx or {}
+        self.phase_name = name
+        hook = self.primitive_hooks.get(name)
+        if hook is not None:
+            hook(self, name, ctx)
+        try:
+            impl = self.primitive_impls.get(name)
+            result = impl(self, ctx) if impl is not None else scripted(ctx)
+        finally:
+            self.phase_name = "transit"
+        exit_hook = self.primitive_hooks.get(f"{name}/exit")
+        if exit_hook is not None:
+            exit_hook(self, name, ctx)
+        return result
+
+    def jitter(self):
+        """衔接段到位目标的随机偏差（半径 entry_jitter 的球内均匀采样，z 减半）。"""
+        if self.entry_jitter <= 0:
+            return np.zeros(3)
+        v = np.random.uniform(-1.0, 1.0, 3)
+        n = np.linalg.norm(v)
+        if n > 1.0:
+            v = v / n
+        v = v * self.entry_jitter
+        v[2] *= 0.5
+        return v
 
     # ---------- 基础设施 ----------
     def reset(self):
@@ -388,24 +447,31 @@ class FullDemo:
               f"停车误差 {err:.1f} mm")
 
     # ---------- 阶段 1-2：盒 A 取板 → 工作位 ----------
-    def pick_board(self):
-        model, data = self.model, self.data
+    def tab_grasp_site(self, R_down):
+        """指腹咬住手柄顶部下方 TAB_BITE 处的左站点目标。"""
+        bp, bR = self.strip_pose()
+        tab_top = bp + bR @ np.array([ts.TAB_LOCAL[0], 0, ts.TAB_LOCAL[2]])
+        grasp = tab_top + np.array([0, 0, -TAB_BITE])
+        return grasp - R_down @ PADS_LOCAL
+
+    def approach_board(self):
+        """衔接段：左臂运送到 P1 入口（手柄上方 5 cm 预抓取位）。"""
         R_down = axes_rot(AXES_GRASP_DOWN)
-
-        def tab_grasp_site():
-            """指腹咬住手柄顶部下方 TAB_BITE 处。"""
-            bp, bR = self.strip_pose()
-            tab_top = bp + bR @ np.array([ts.TAB_LOCAL[0], 0, ts.TAB_LOCAL[2]])
-            grasp = tab_top + np.array([0, 0, -TAB_BITE])
-            return grasp - R_down @ PADS_LOCAL
-
-        pre = tab_grasp_site() + np.array([0, 0, 0.05])
-        q_pre, e, a = self.left.solve(data, pre, axes=AXES_GRASP_DOWN, q_init=NEUTRAL_ARM)
+        pre = self.tab_grasp_site(R_down) + np.array([0, 0, 0.05]) + self.jitter()
+        q_pre, e, a = self.left.solve(self.data, pre, axes=AXES_GRASP_DOWN,
+                                      q_init=NEUTRAL_ARM)
         self.log(f"IK 左臂预抓取: 误差 {e*1000:.1f}mm/{a:.1f}°")
         self.move_joint(self.left, q_pre, 2.0)
         self.dwell(0.3)
+        return q_pre
 
-        q_grasp, e, a = self.left.solve(data, tab_grasp_site(), axes=AXES_GRASP_DOWN, q_init=q_pre)
+    def grasp_board_scripted(self, ctx):
+        """P1 抓板原语（脚本版）：预抓取位 → 下降咬住手柄 → 闭爪 → latch 锁定。"""
+        model, data = self.model, self.data
+        R_down = axes_rot(AXES_GRASP_DOWN)
+        q_grasp, e, a = self.left.solve(
+            data, self.tab_grasp_site(R_down), axes=AXES_GRASP_DOWN,
+            q_init=ctx.get("q_pre", self.left.q_now(data)))
         self.log(f"IK 左臂抓取位: 误差 {e*1000:.1f}mm/{a:.1f}°")
         self.move_joint(self.left, q_grasp, 1.2)
         self.close_gripper(self.left_grip, GRIP_CLOSE_L)
@@ -415,10 +481,13 @@ class FullDemo:
             ts.engage_latch(model, data)
             self.log("已启用左爪锁定（latch）")
 
-        # 竖直提出槽位
+    def lift_and_hold(self):
+        """衔接段：竖直提出槽位 → 空中转体 90° 到水平工作位（P2 前置）。"""
+        data = self.data
         sp, _ = self.site_pose(self.left)
         q_lift, e, a = self.left.solve(data, sp + np.array([0, 0, 0.17]),
-                                       axes=AXES_GRASP_DOWN, q_init=q_grasp)
+                                       axes=AXES_GRASP_DOWN,
+                                       q_init=self.left.q_now(data))
         self.move_joint(self.left, q_lift, 1.8)
         dp, ang = self.strip_slip()
         self.log(f"[t={self.t:6.2f}s] 提板完成，夹持滑移 {dp:.1f}mm/{ang:.1f}°")
@@ -439,9 +508,134 @@ class FullDemo:
         tilt = np.degrees(np.arccos(np.clip(bR[2, 2], -1, 1)))
         self.log(f"[t={self.t:6.2f}s] 转体到工作位，板面倾角 {tilt:.1f}°")
 
+    def pick_board(self):
+        q_pre = self.approach_board()
+        self.run_primitive("p1_grasp_board", self.grasp_board_scripted,
+                           ctx={"q_pre": q_pre})
+        self.lift_and_hold()
+
     # ---------- 阶段 3-5：撕剪两格入盒 B ----------
-    def tear_segments(self):
+    def seg_site_target(self, seg, overlap, R_tear):
+        """右爪夹目标格外缘的站点目标（感知性读取）。"""
+        seg_pos = self.sense_body_pos(seg)
+        grasp = seg_pos + np.array([ts.SEG_HX - overlap, 0, 0])
+        return grasp - R_tear @ PADS_LOCAL
+
+    def approach_seg(self, seg, overlap, R_tear):
+        """衔接段：右臂张爪运送到 P2 入口（目标格外缘后撤 5 cm 预抓取位）。"""
+        data = self.data
+        data.ctrl[self.right_grip] = GRIP_OPEN
+        pre = (self.seg_site_target(seg, overlap, R_tear)
+               + X * PREGRASP_BACKOFF + self.jitter())
+        q_pre, e, a = self.right.solve(data, pre, axes=AXES_TEAR,
+                                       q_init=self.right.q_now(data))
+        self.log(f"IK 右臂预抓取: 误差 {e*1000:.1f}mm/{a:.1f}°")
+        self.move_joint(self.right, q_pre, 1.8)
+        self.dwell(0.3)
+        return pre
+
+    def tear_seg_scripted(self, ctx):
+        """P2 撕剪原语（脚本版）：夹住格缘 →（自检重抓）→ 扭腕撕断（+补拉）。
+
+        ctx: seg / target_welds / watch / overlap / R_tear / pre。
+        返回 torn（易撕线全断）。"""
         model, data = self.model, self.data
+        seg, target_welds = ctx["seg"], ctx["target_welds"]
+        watch, overlap, R_tear = ctx["watch"], ctx["overlap"], ctx["R_tear"]
+        pre = ctx["pre"]
+
+        q_grasp, e, a = self.right.solve(data, self.seg_site_target(seg, overlap, R_tear),
+                                         axes=AXES_TEAR, q_init=self.right.q_now(data))
+        self.log(f"IK 右臂抓取位: 误差 {e*1000:.1f}mm/{a:.1f}°")
+        self.move_joint(self.right, q_grasp, 1.2)
+        self.close_gripper(self.right_grip, GRIP_CLOSE_R)
+        self.dwell(0.3)
+        # 抓取自检：规范撕剪要求双指同时夹触格缘；执行噪声导致的
+        # 浅抓在此重试（重抓行为会录进演示——教学生"抓不稳就重来"）
+        if self.strict_tear:
+            for retry in range(2):
+                if self.finger_touch_count(seg) >= 2:
+                    break
+                self.log(f"[t={self.t:6.2f}s] 抓取自检未过（双指={self.finger_touch_count(seg)}），重抓 #{retry+1}")
+                data.ctrl[self.right_grip] = GRIP_OPEN
+                self.dwell(0.3)
+                q_re, _, _ = self.right.solve(data, pre, axes=AXES_TEAR,
+                                              q_init=self.right.q_now(data))
+                self.move_joint(self.right, q_re, 1.0)
+                self.dwell(0.2)
+                q_grasp, _, _ = self.right.solve(data, self.seg_site_target(seg, overlap, R_tear),
+                                                 axes=AXES_TEAR, q_init=q_re)
+                self.move_joint(self.right, q_grasp, 1.0)
+                self.close_gripper(self.right_grip, GRIP_CLOSE_R)
+                self.dwell(0.3)
+        self.log(f"[t={self.t:6.2f}s] 闭爪后指间接触点: {self.grasp_contacts(seg)}"
+                 f"（双指 {self.finger_touch_count(seg) >= 2}）")
+
+        # 缓慢扭转撕剪，断裂即停；必要时补一段下拉
+        wrist_act = model.actuator("right/wrist_rotate").id
+        twist0 = data.ctrl[wrist_act]
+        for k in range(int(3.0 * CTRL_HZ)):
+            if all(w in self.broken for w in target_welds):
+                break
+            s = minjerk((k + 1) / (3.0 * CTRL_HZ))
+            data.ctrl[wrist_act] = twist0 + s * TWIST_RAD
+            self.step_ctrl(watch)
+        if not all(w in self.broken for w in target_welds):
+            q_now = self.right.q_now(data)
+            q_pull, _, _ = self.right.solve(
+                data, self.right.site_pos(data) + np.array([0.03, 0, -0.04]),
+                axes=None, q_init=q_now)
+            self.move_joint(self.right, q_pull, 1.2, watch)
+        torn = all(w in self.broken for w in target_welds)
+        self.dwell(0.5)   # 断裂后的弹性释放让格在指间振荡，先稳住再运送
+        self.log(f"[t={self.t:6.2f}s] {seg} 撕剪{'成功' if torn else '失败'}"
+              f"（断后指间接触点 {self.grasp_contacts(seg)}）")
+        return torn
+
+    def transport_to_boxb(self):
+        """衔接段：夹着撕下的格提起（保持姿态防甩落）→ 盒 B 上方指尖朝下（P3 入口）。"""
+        data = self.data
+        mujoco.mj_forward(self.model, data)
+        lift = self.right.site_pos(data) + np.array([0.04, 0, 0.05])
+        q_lift, _, _ = self.right.solve(data, lift, axes=AXES_TEAR,
+                                        q_init=self.right.q_now(data))
+        self.move_joint(self.right, q_lift, 1.0)
+        drop = (self.cfg.box_b_center + self.sense_offset
+                + np.array([0, 0, 0.075]) + self.jitter())
+        q_drop, e, a = self.right.solve(data, drop, axes=[(0, DOWN)], q_init=q_lift)
+        self.log(f"IK 右臂投放位(指尖朝下): 误差 {e*1000:.1f}mm/{a:.1f}°")
+        self.move_joint(self.right, q_drop, 2.4)
+        self.dwell(0.3)
+
+    def place_scripted(self, ctx):
+        """P3 投放原语（脚本版）：盒 B 上方松爪 + 抖腕甩净。ctx: seg。"""
+        data = self.data
+        seg = ctx["seg"]
+        wrist_act = self.model.actuator("right/wrist_rotate").id
+        self.log(f"[t={self.t:6.2f}s] 投放前指间接触点: {self.grasp_contacts(seg)}")
+        data.ctrl[self.right_grip] = GRIP_OPEN
+        self.dwell(0.4)
+        shake_base = data.ctrl[wrist_act]
+        for k in range(int(1.2 * CTRL_HZ)):
+            data.ctrl[wrist_act] = shake_base + 0.28 * np.sin(2 * np.pi * 3.5 * k / CTRL_HZ)
+            self.step_ctrl()
+        data.ctrl[wrist_act] = shake_base
+        self.dwell(0.5)
+
+    def retreat_right(self, seg, torn):
+        """衔接段：判定入盒 → 右臂撤回待命位。"""
+        data = self.data
+        p = data.body(seg).xpos
+        ok = (torn and abs(p[0] - self.cfg.box_b_xy[0]) < ts.BOX_B_HX
+              and abs(p[1] - self.cfg.box_b_xy[1]) < ts.BOX_B_HY and p[2] < 0.05)
+        self.log(f"{seg} 最终位置 {np.round(p, 3)} -> {'√ 入盒 B' if ok else '× 未入盒 B'}")
+        q_home, _, _ = self.right.solve(
+            data, np.array([0.22, 0.02, 0.26]), axes=AXES_TEAR,
+            q_init=self.right.q_now(data))
+        self.move_joint(self.right, q_home, 1.4)
+        return ok
+
+    def tear_segments(self):
         results = []
         for idx, (col, row) in enumerate(self.targets):
             seg = ts.seg_name(col, row)
@@ -453,102 +647,21 @@ class FullDemo:
             # 规范撕剪（strict）需要双指稳定夹持，咬合加深一档提高容错
             overlap = EDGE_OVERLAP + (0.001 if self.strict_tear else 0.0)
 
-            def site_target():
-                seg_pos = self.sense_body_pos(seg)
-                grasp = seg_pos + np.array([ts.SEG_HX - overlap, 0, 0])
-                return grasp - R_tear @ PADS_LOCAL
-
-            data.ctrl[self.right_grip] = GRIP_OPEN
-            pre = site_target() + X * PREGRASP_BACKOFF
-            q_pre, e, a = self.right.solve(data, pre, axes=AXES_TEAR,
-                                           q_init=self.right.q_now(data))
-            self.log(f"IK 右臂预抓取: 误差 {e*1000:.1f}mm/{a:.1f}°")
-            self.move_joint(self.right, q_pre, 1.8)
-            self.dwell(0.3)
-
-            q_grasp, e, a = self.right.solve(data, site_target(), axes=AXES_TEAR, q_init=q_pre)
-            self.log(f"IK 右臂抓取位: 误差 {e*1000:.1f}mm/{a:.1f}°")
-            self.move_joint(self.right, q_grasp, 1.2)
-            self.close_gripper(self.right_grip, GRIP_CLOSE_R)
-            self.dwell(0.3)
-            # 抓取自检：规范撕剪要求双指同时夹触格缘；执行噪声导致的
-            # 浅抓在此重试（重抓行为会录进演示——教学生"抓不稳就重来"）
-            if self.strict_tear:
-                for retry in range(2):
-                    if self.finger_touch_count(seg) >= 2:
-                        break
-                    self.log(f"[t={self.t:6.2f}s] 抓取自检未过（双指={self.finger_touch_count(seg)}），重抓 #{retry+1}")
-                    data.ctrl[self.right_grip] = GRIP_OPEN
-                    self.dwell(0.3)
-                    q_re, _, _ = self.right.solve(data, pre, axes=AXES_TEAR,
-                                                  q_init=self.right.q_now(data))
-                    self.move_joint(self.right, q_re, 1.0)
-                    self.dwell(0.2)
-                    q_grasp, _, _ = self.right.solve(data, site_target(),
-                                                     axes=AXES_TEAR, q_init=q_re)
-                    self.move_joint(self.right, q_grasp, 1.0)
-                    self.close_gripper(self.right_grip, GRIP_CLOSE_R)
-                    self.dwell(0.3)
-            self.log(f"[t={self.t:6.2f}s] 闭爪后指间接触点: {self.grasp_contacts(seg)}"
-                     f"（双指 {self.finger_touch_count(seg) >= 2}）")
-
-            # 缓慢扭转撕剪，断裂即停；必要时补一段下拉
-            wrist_act = model.actuator("right/wrist_rotate").id
-            twist0 = data.ctrl[wrist_act]
-            for k in range(int(3.0 * CTRL_HZ)):
-                if all(w in self.broken for w in target_welds):
-                    break
-                s = minjerk((k + 1) / (3.0 * CTRL_HZ))
-                data.ctrl[wrist_act] = twist0 + s * TWIST_RAD
-                self.step_ctrl(watch)
-            if not all(w in self.broken for w in target_welds):
-                q_now = self.right.q_now(data)
-                q_pull, _, _ = self.right.solve(
-                    data, self.right.site_pos(data) + np.array([0.03, 0, -0.04]),
-                    axes=None, q_init=q_now)
-                self.move_joint(self.right, q_pull, 1.2, watch)
-            torn = all(w in self.broken for w in target_welds)
-            self.dwell(0.5)   # 断裂后的弹性释放让格在指间振荡，先稳住再运送
-            self.log(f"[t={self.t:6.2f}s] {seg} 撕剪{'成功' if torn else '失败'}"
-                  f"（断后指间接触点 {self.grasp_contacts(seg)}）")
-
-            # 提起（保持姿态只平移，防甩落）→ 盒 B 上方指尖朝下松爪投放
-            mujoco.mj_forward(model, data)
-            lift = self.right.site_pos(data) + np.array([0.04, 0, 0.05])
-            q_lift, _, _ = self.right.solve(data, lift, axes=AXES_TEAR,
-                                            q_init=self.right.q_now(data))
-            self.move_joint(self.right, q_lift, 1.0)
-            drop = self.cfg.box_b_center + self.sense_offset + np.array([0, 0, 0.075])
-            q_drop, e, a = self.right.solve(data, drop, axes=[(0, DOWN)], q_init=q_lift)
-            self.log(f"IK 右臂投放位(指尖朝下): 误差 {e*1000:.1f}mm/{a:.1f}°")
-            self.move_joint(self.right, q_drop, 2.4)
-            self.dwell(0.3)
-            self.log(f"[t={self.t:6.2f}s] 投放前指间接触点: {self.grasp_contacts(seg)}")
-            data.ctrl[self.right_grip] = GRIP_OPEN
-            self.dwell(0.4)
-            shake_base = data.ctrl[wrist_act]
-            for k in range(int(1.2 * CTRL_HZ)):
-                data.ctrl[wrist_act] = shake_base + 0.28 * np.sin(2 * np.pi * 3.5 * k / CTRL_HZ)
-                self.step_ctrl()
-            data.ctrl[wrist_act] = shake_base
-            self.dwell(0.5)
-
-            p = data.body(seg).xpos
-            ok = (torn and abs(p[0] - self.cfg.box_b_xy[0]) < ts.BOX_B_HX
-                  and abs(p[1] - self.cfg.box_b_xy[1]) < ts.BOX_B_HY and p[2] < 0.05)
+            pre = self.approach_seg(seg, overlap, R_tear)
+            torn = self.run_primitive(
+                "p2_tear_seg", self.tear_seg_scripted,
+                ctx={"seg": seg, "target_welds": target_welds, "watch": watch,
+                     "overlap": overlap, "R_tear": R_tear, "pre": pre})
+            self.transport_to_boxb()
+            self.run_primitive("p3_place", self.place_scripted, ctx={"seg": seg})
+            ok = self.retreat_right(seg, torn)
             results.append((seg, ok))
-            self.log(f"{seg} 最终位置 {np.round(p, 3)} -> {'√ 入盒 B' if ok else '× 未入盒 B'}")
-
-            q_home, _, _ = self.right.solve(
-                data, np.array([0.22, 0.02, 0.26]), axes=AXES_TEAR,
-                q_init=self.right.q_now(data))
-            self.move_joint(self.right, q_home, 1.4)
         return results
 
     # ---------- 阶段 6：剩板放回盒 A ----------
-    def return_board(self):
-        model, data = self.model, self.data
-
+    def approach_slot(self):
+        """衔接段：剩板高位转回竖直，运送到盒 A 槽位上方（P4 入口）。"""
+        data = self.data
         # 高位转回竖直（先撤到中途点再转，避免扫到盒 B）
         mid = np.array([-0.16, 0.02, 0.30])
         q_mid, e, a = self.left.solve(data, mid, axes=[(0, np.array([-0.5, 0, -1.0])), (1, X)],
@@ -556,13 +669,20 @@ class FullDemo:
         self.move_joint(self.left, q_mid, 2.2)
 
         R_vert = _quat_mat(ts.BOARD_UP_QUAT)
-        strip_high = self.cfg.board_home + np.array([0, 0, 0.09])
+        strip_high = self.cfg.board_home + np.array([0, 0, 0.09]) + self.jitter()
         site_high, axes_vert = self.left_pose_for_strip(strip_high, R_vert)
         q_high, e, a = self.left.solve(data, site_high, axes=axes_vert, q_init=q_mid)
         self.log(f"IK 左臂回放高位: 误差 {e*1000:.1f}mm/{a:.1f}°")
         self.move_joint(self.left, q_high, 2.2)
         self.dwell(0.4)
+        return axes_vert
 
+    def insert_scripted(self, ctx):
+        """P4 回插原语（脚本版）：板位误差修正 → 缓慢下插入槽 → 松爪。
+
+        ctx: axes_vert（竖直持板的左站点轴约束）。"""
+        model, data = self.model, self.data
+        axes_vert = ctx["axes_vert"]
         # 撕掉若干格后板变短：按剩余板长算下插深度（板底入槽即可，松爪后自行滑到底）
         remain_x = max((ts.seg_offset(c, r)[0] for c, r in ts.all_segments()
                         if not all(w in self.broken for w in ts.weld_names_of(c, r))),
@@ -585,6 +705,10 @@ class FullDemo:
             ts.release_latch(model, data)
         data.ctrl[self.left_grip] = GRIP_OPEN
         self.dwell(0.6)
+
+    def retreat_and_judge(self, axes_vert):
+        """衔接段：左臂上撤 → 判定剩板是否插回盒 A。"""
+        data = self.data
         sp, _ = self.site_pose(self.left)
         q_up, _, _ = self.left.solve(data, sp + np.array([0, 0, 0.14]),
                                      axes=axes_vert, q_init=self.left.q_now(data))
@@ -597,6 +721,12 @@ class FullDemo:
         self.log(f"剩板最终位置 {np.round(bp, 3)}（目标 {np.round(self.cfg.board_home, 3)}）"
                  f" -> {'√ 已插回盒 A' if ok else '× 未插回盒 A'}")
         return ok
+
+    def return_board(self):
+        axes_vert = self.approach_slot()
+        self.run_primitive("p4_insert", self.insert_scripted,
+                           ctx={"axes_vert": axes_vert})
+        return self.retreat_and_judge(axes_vert)
 
     # ---------- 主流程 ----------
     def run(self):

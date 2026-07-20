@@ -94,7 +94,7 @@ class DemoDataset(Dataset):
 
 # ---------------- 模型 ----------------
 class ACTLite(nn.Module):
-    def __init__(self, n_cams=3, chunk=CHUNK, d=D_MODEL, act_dim=14):
+    def __init__(self, n_cams=3, chunk=CHUNK, d=D_MODEL, act_dim=14, feat_hw=(8, 10)):
         super().__init__()
         from torchvision.models import ResNet18_Weights, resnet18
 
@@ -105,7 +105,10 @@ class ACTLite(nn.Module):
         # 任务条件 token：目标格行号（f/b）。观测中目标不可见（板完整对称），
         # 没有它策略会输出两类演示的平均动作
         self.target_emb = nn.Embedding(2, d)
-        n_img_tokens = n_cams * 8 * 10                             # 240x320 → 8x10
+        # 图像特征网格：全流程 3 相机用 8x10（240x320 天然网格，高清池化回来）；
+        # 原语模式单相机可负担 15x20（480x640 天然网格）保留空间细节
+        self.feat_hw = tuple(feat_hw)
+        n_img_tokens = n_cams * self.feat_hw[0] * self.feat_hw[1]
         self.pos_emb = nn.Parameter(torch.randn(1, n_img_tokens + 2 + chunk, d) * 0.02)
         self.queries = nn.Parameter(torch.randn(1, chunk, d) * 0.02)
         layer = nn.TransformerEncoderLayer(d, nhead=8, dim_feedforward=1024,
@@ -117,7 +120,9 @@ class ACTLite(nn.Module):
     def forward(self, imgs, qpos, target_row):
         B, N, C, H, W = imgs.shape
         feat = self.proj(self.backbone(imgs.reshape(B * N, C, H, W)))
-        feat = feat.flatten(2).transpose(1, 2).reshape(B, -1, D_MODEL)   # (B, N*80, d)
+        if feat.shape[-2:] != self.feat_hw:
+            feat = nn.functional.adaptive_avg_pool2d(feat, self.feat_hw)
+        feat = feat.flatten(2).transpose(1, 2).reshape(B, -1, D_MODEL)   # (B, N*hw, d)
         q_tok = self.qpos_in(qpos).unsqueeze(1)
         t_tok = self.target_emb(target_row).unsqueeze(1)
         x = torch.cat([feat, q_tok, t_tok, self.queries.expand(B, -1, -1)], dim=1)

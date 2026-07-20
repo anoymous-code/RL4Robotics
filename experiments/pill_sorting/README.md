@@ -24,9 +24,13 @@ powershell -File ..\..\scripts\download_assets.ps1
 
 | 文件 | 说明 |
 |---|---|
-| `run_full_demo.py` | **v5 主演示 / 脚本专家**：导航到桌前 → 取板 → 撕剪 → 入盒 B → 放回盒 A（支持 `SceneCfg` 域随机化、跳导航、录制钩子） |
+| `run_full_demo.py` | **v5 主演示 / 脚本专家**：导航到桌前 → 取板 → 撕剪 → 入盒 B → 放回盒 A（支持 `SceneCfg` 域随机化、跳导航、录制钩子）。流程拆为「衔接控制段 + 4 个原语窗口」，原语窗口可被学习策略替换（`primitive_impls`） |
+| `primitives.py` | **操作原语层**：原语规格（执行臂/相机/动作切片/时限）、出口谓词、入口状态快照/恢复、`PrimitiveSession` 单臂执行会话；`--gen` 生成原语入口状态池 / `--smoke` 恢复一致性检查 |
+| `train_prim.py` | 原语 BC 训练：按 `/phase` 切分演示 + 原语级成功筛选（`prim_ok`），单臂 7 维动作 / 单腕相机 480x640（特征网格 15x20 不池化） |
+| `eval_prim.py` | 原语级评测：入口状态池起步 + 出口谓词计分，`--scripted` 脚本原语基线对照 |
+| `run_primitives.py` | **原语分解编排器**：脚本衔接段 + 学习原语 + 原语级重试的全流程评测，`--prims` 选择替换哪些原语（`none` = 纯脚本对照） |
 | `pill_env.py` | Gymnasium 环境：reset 域随机化，动作 14 维（双臂+爪），观测 = qpos + 机载三相机图像 |
-| `collect_demos.py` | 脚本专家自动采集演示数据（ACT 风格 HDF5，含成功率统计），产物在 `demos/`（不入库） |
+| `collect_demos.py` | 脚本专家自动采集演示数据（ACT 风格 HDF5 + `/phase` 相位标签 + 原语级成功标注），产物在 `demos/`（不入库）；`--wrist-only` 双腕相机 / `--entry-jitter` 衔接段到位抖动 |
 | `train_act.py` | ACT-lite 模仿学习训练（ResNet18 + Transformer 动作分块，L1 损失，AMP），产出 `ckpt/` 与训练曲线 |
 | `eval_act.py` | 策略评测：随机场景 rollout 成功率（规范撕剪/敲断口径拆分）+ 四视角视频，`--strict` 严格物理档 |
 | `tear_refine_env.py` | RL 精修环境：撕剪-投放子任务（semi-MDP 相位级修正动作 + 物理随机化 + 特权观测），`--gen-pool` 生成重置池 / `--smoke` 一致性检查 / `--baseline` 脚本基线 |
