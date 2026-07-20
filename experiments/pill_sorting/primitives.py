@@ -139,17 +139,21 @@ class PrimitiveSession:
                  没有脚本的显式 engage_latch 调用，物理必须自动生效）
     """
 
-    def __init__(self, demo, prim, ctx, img_hw=(480, 640)):
+    def __init__(self, demo, prim, ctx, img_hw=(480, 640), renderer=None):
         self.demo = demo
         self.prim = prim
         self.spec = PRIM_SPECS[prim]
         self.ctx = ctx
         self.img_hw = tuple(img_hw)
+        # 渲染器可外部注入（编排器多原语共享）：mujoco Renderer.close()
+        # 会连带杀掉共享 GL 上下文，把同 episode 其他渲染器（如录像）
+        # 变成黑屏——注入的渲染器由持有者负责生命周期
+        self._ext_renderer = renderer is not None
         model = demo.model
         self.seg = ts.seg_name(*demo.cfg.target_seg)
         self.act14 = actuator_ids14(model)
         self.qpos14 = qpos_ids14(model)
-        self._renderer = None
+        self._renderer = renderer
         self.t0 = demo.t
 
         # p2：重建断裂 watcher（ctx 里的 watch 闭包不进快照）
@@ -230,9 +234,9 @@ class PrimitiveSession:
         return self.success()
 
     def close(self):
-        if self._renderer is not None:
+        if self._renderer is not None and not self._ext_renderer:
             self._renderer.close()
-            self._renderer = None
+        self._renderer = None
 
 
 # ---------------- 入口状态池 ----------------

@@ -35,10 +35,12 @@ VIDEO_DIR = HERE.parents[1] / "docs" / "assets" / "videos"
 
 
 class FlowVideo:
-    """三视角（全景 + 双腕）横排录像，挂 FullDemo.recorder。"""
+    """QuadCam 四视角录像（全景/主视角/双腕，1920x1440），挂 FullDemo.recorder。"""
 
     def __init__(self, model, path):
-        self.r = mujoco.Renderer(model, height=360, width=480)
+        from run_full_demo import QuadCam
+
+        self.quad = QuadCam(model)
         self.writer = imageio.get_writer(path, fps=25, quality=7, macro_block_size=1)
         self.k = 0
 
@@ -46,24 +48,32 @@ class FlowVideo:
         self.k += 1
         if self.k % 2:
             return
-        cells = []
-        for cam in ("room", "wrist_cam_left", "wrist_cam_right"):
-            self.r.update_scene(data, camera=cam)
-            cells.append(self.r.render().copy())
-        self.writer.append_data(np.hstack(cells))
+        self.writer.append_data(self.quad.composite(data))
 
     def close(self):
         self.writer.close()
-        self.r.close()
+        self.quad.close()
 
 
-def make_impl(policy, retries=1, exec_steps=EXEC_STEPS, img_hw=(480, 640)):
-    """把原语策略包装成 FullDemo.primitive_impls 的实现（含入口重试）。"""
+def make_impl(policy, retries=1, exec_steps=EXEC_STEPS, img_hw=(480, 640),
+              shared=None):
+    """把原语策略包装成 FullDemo.primitive_impls 的实现（含入口重试）。
+
+    shared: episode 级共享渲染器缓存 dict——原语窗口各自建/关渲染器会
+    杀掉共享 GL 上下文（录像黑屏），改为整个 episode 共用一个。"""
+    shared = shared if shared is not None else {}
 
     def impl(demo, ctx):
         name = demo.phase_name
         spec = PRIM_SPECS[name]
-        sess = PrimitiveSession(demo, name, ctx, img_hw=img_hw)
+        if shared.get("demo") is not demo:
+            # 新 episode：旧渲染器不 close（close 会连坐杀掉本 episode
+            # 录像上下文），交给进程退出回收；20 集级别显存可接受
+            shared["renderer"] = mujoco.Renderer(demo.model, height=img_hw[0],
+                                                 width=img_hw[1])
+            shared["demo"] = demo
+        sess = PrimitiveSession(demo, name, ctx, img_hw=img_hw,
+                                renderer=shared["renderer"])
         arm = demo.left if spec.arm == "left" else demo.right
         grip_act = demo.left_grip if spec.arm == "left" else demo.right_grip
         q_entry = arm.q_now(demo.data)
@@ -121,9 +131,11 @@ def run_episode(cfg, policies, retries=1, exec_steps=EXEC_STEPS, strict=True,
     demo = FullDemo(cfg=cfg, skip_drive=True, targets=[tuple(cfg.target_seg)],
                     make_video=False, verbose=verbose, strict_tear=strict,
                     entry_jitter=entry_jitter)
+    shared = {}
     for prim, policy in policies.items():
         demo.primitive_impls[prim] = make_impl(policy, retries=retries,
-                                               exec_steps=exec_steps)
+                                               exec_steps=exec_steps,
+                                               shared=shared)
     prim_ok = {}
 
     def on_exit(d, name, ctx):
@@ -159,13 +171,26 @@ def main(n, prims, seed=2000, retries=1, exec_steps=EXEC_STEPS,
     rng = np.random.default_rng(seed)
     stats = {p: [0, 0] for p in PRIM_NAMES}   # [成功, 出现]
     n_full = n_seg = 0
+    quota = {"ok": video, "fail": video}      # 成败案例各录 video 条
     for ep in range(n):
         cfg = ts.sample_cfg(rng)
-        vp = VIDEO_DIR / f"prim_flow_{ep}.mp4" if ep < video else None
+        vp = None
+        if quota["ok"] > 0 or quota["fail"] > 0:
+            vp = VIDEO_DIR / f"_tmp_prim_flow_{ep}.mp4"
         n_ok, returned, prim_ok = run_episode(
             cfg, policies, retries=retries, exec_steps=exec_steps,
             entry_jitter=entry_jitter, video_path=vp)
         full = (n_ok == 1) and returned
+        if vp is not None:
+            kind = "ok" if full else "fail"
+            if quota[kind] > 0:
+                idx = video - quota[kind]
+                dst = VIDEO_DIR / f"prim_flow_{kind}_{idx}.mp4"
+                vp.replace(dst)
+                quota[kind] -= 1
+                print(f"    -> 视频归档 {dst.name}")
+            else:
+                vp.unlink(missing_ok=True)
         n_full += full
         n_seg += (n_ok == 1)
         for p, ok in prim_ok.items():
@@ -173,8 +198,8 @@ def main(n, prims, seed=2000, retries=1, exec_steps=EXEC_STEPS,
             stats[p][1] += 1
         marks = " ".join(f"{p.split('_')[0]}:{'√' if ok else '×'}"
                          for p, ok in prim_ok.items())
-        print(f"[ep {ep:02d}] 撕剪入盒 {n_ok == 1}, 全流程 {full} | {marks}"
-              + (f" 视频 {vp}" if vp else ""), flush=True)
+        print(f"[ep {ep:02d}] 撕剪入盒 {n_ok == 1}, 全流程 {full} | {marks}",
+              flush=True)
 
     print(f"\n=== 学习原语 [{label}] ===")
     for p in PRIM_NAMES:
@@ -196,11 +221,14 @@ if __name__ == "__main__":
     parser.add_argument("--exec-steps", type=int, default=EXEC_STEPS)
     parser.add_argument("--entry-jitter", type=float, default=0.0,
                         help="衔接段到位偏差（评测鲁棒性用）")
-    parser.add_argument("--video", type=int, default=0, help="录前 N 条视频")
+    parser.add_argument("--video", type=int, default=0,
+                        help="成功/失败案例各录 N 条四视角视频")
+    parser.add_argument("--ckpt", type=str, nargs="*", default=[],
+                        help="覆盖检查点：prim=ckpt文件名（默认 {prim}_latest.pt）")
     args = parser.parse_args()
     prims = [p for p in args.prims if p != "none"]
     for p in prims:
         assert p in PRIM_NAMES, f"未知原语 {p}"
     main(args.n, prims, seed=args.seed, retries=args.retries,
          exec_steps=args.exec_steps, entry_jitter=args.entry_jitter,
-         video=args.video)
+         video=args.video, ckpts=dict(kv.split("=", 1) for kv in args.ckpt))

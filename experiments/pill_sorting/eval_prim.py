@@ -61,14 +61,16 @@ class PrimPolicy:
 
 
 class PrimVideo:
-    """双视角（场景全景 + 原语腕相机）录像，每 2 tick 一帧。
+    """QuadCam 四视角录像（全景/主视角/双腕，1920x1440），每 2 tick 一帧。
 
     tick 签名兼容 FullDemo.recorder 钩子（脚本基线录像直接挂 recorder）。
     """
 
     def __init__(self, sess, path):
+        from run_full_demo import QuadCam
+
         self.sess = sess
-        self.r = mujoco.Renderer(sess.demo.model, height=480, width=640)
+        self.quad = QuadCam(sess.demo.model)
         self.writer = imageio.get_writer(path, fps=25, quality=7, macro_block_size=1)
         self.k = 0
 
@@ -76,15 +78,11 @@ class PrimVideo:
         self.k += 1
         if self.k % 2:
             return
-        cells = []
-        for cam in ("room", self.sess.spec.cam):
-            self.r.update_scene(self.sess.demo.data, camera=cam)
-            cells.append(self.r.render().copy())
-        self.writer.append_data(np.hstack(cells))
+        self.writer.append_data(self.quad.composite(self.sess.demo.data))
 
     def close(self):
         self.writer.close()
-        self.r.close()
+        self.quad.close()
 
 
 def rollout_policy(sess, policy, exec_steps=EXEC_STEPS, video=None):
@@ -111,14 +109,16 @@ def main(prim, n, ckpt=None, tag="eval", scripted=False, exec_steps=EXEC_STEPS,
     policy = None
     if not scripted:
         policy = PrimPolicy(HERE / "ckpt" / (ckpt or f"{prim}_latest.pt"))
+    mode = "scripted" if scripted else "policy"
+    # 成败双录：先录临时文件，按结果归档 ok_/fail_ 各 video 条
+    quota = {"ok": video, "fail": video}
     wins = 0
     for ep in range(n):
         sess = restore_session(pool[ep])
-        vid = None
-        if ep < video:
-            mode = "scripted" if scripted else "policy"
-            vp = VIDEO_DIR / f"prim_{prim}_{mode}_{ep}.mp4"
-            vid = PrimVideo(sess, vp)
+        vid, vp_tmp = None, None
+        if quota["ok"] > 0 or quota["fail"] > 0:
+            vp_tmp = VIDEO_DIR / f"_tmp_prim_{prim}_{ep}.mp4"
+            vid = PrimVideo(sess, vp_tmp)
         if scripted:
             if vid:
                 sess.demo.recorder = vid
@@ -127,12 +127,20 @@ def main(prim, n, ckpt=None, tag="eval", scripted=False, exec_steps=EXEC_STEPS,
             ok = rollout_policy(sess, policy, exec_steps=exec_steps, video=vid)
         if vid:
             vid.close()
+            kind = "ok" if ok else "fail"
+            if quota[kind] > 0:
+                idx = video - quota[kind]
+                vp_tmp.replace(VIDEO_DIR / f"prim_{prim}_{mode}_{kind}_{idx}.mp4")
+                quota[kind] -= 1
+                print(f"    -> 视频归档 prim_{prim}_{mode}_{kind}_{idx}.mp4")
+            else:
+                vp_tmp.unlink(missing_ok=True)
         wins += ok
         print(f"[ep {ep:02d}] {'成功' if ok else '失败'}  "
               f"(elapsed {sess.elapsed():.1f}s)", flush=True)
         sess.close()
-    mode = "脚本基线" if scripted else "学习策略"
-    print(f"\n{prim} {mode}: {wins}/{n} = {wins/n*100:.0f}%")
+    label = "脚本基线" if scripted else "学习策略"
+    print(f"\n{prim} {label}: {wins}/{n} = {wins/n*100:.0f}%")
     return wins / n
 
 
@@ -144,7 +152,8 @@ if __name__ == "__main__":
     parser.add_argument("--tag", type=str, default="eval", help="入口池后缀")
     parser.add_argument("--scripted", action="store_true", help="脚本原语基线")
     parser.add_argument("--exec-steps", type=int, default=EXEC_STEPS)
-    parser.add_argument("--video", type=int, default=0, help="录前 N 条 rollout 视频")
+    parser.add_argument("--video", type=int, default=0,
+                        help="成功/失败案例各录 N 条四视角视频")
     args = parser.parse_args()
     main(args.prim, args.n, ckpt=args.ckpt, tag=args.tag, scripted=args.scripted,
          exec_steps=args.exec_steps, video=args.video)

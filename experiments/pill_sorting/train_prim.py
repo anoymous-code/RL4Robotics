@@ -121,7 +121,9 @@ class PrimDataset(Dataset):
 def train(prim, steps, batch, lr=1e-4, chunk=CHUNK_PRIM, prefix="prim",
           out_tag=None, max_files=None):
     out_tag = out_tag or prim
-    files = sorted(DEMO_DIR.glob(f"{prefix}_*.hdf5"))
+    files = []
+    for p in prefix.split(","):        # 逗号分隔多前缀（全流程演示 + 原语补采）
+        files += sorted(DEMO_DIR.glob(f"{p}_*.hdf5"))
     if max_files:
         files = files[:max_files]
     assert files, "没有原语演示数据，先运行 collect_demos.py --prefix prim"
