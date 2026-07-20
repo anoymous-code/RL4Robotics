@@ -61,8 +61,9 @@ class ActPolicy:
         return chunk * self.stats["act_std"] + self.stats["act_mean"]
 
 
-def rollout(env, policy, video_path=None, seed=None, phys=None):
-    """动作块开环执行 rollout：一次推理执行前 EXEC_STEPS 步再重推理。
+def rollout(env, policy, video_path=None, seed=None, phys=None,
+            exec_steps=EXEC_STEPS):
+    """动作块开环执行 rollout：一次推理执行前 exec_steps 步再重推理。
 
     注意不用"每步重推理 + 时间集成"：本策略实测忽略 qpos（图像与 qpos 在
     演示中完全冗余，模型走了图像捷径），每步重推理时图像几乎不变 →
@@ -78,7 +79,7 @@ def rollout(env, policy, video_path=None, seed=None, phys=None):
     last_info, steps, done = {}, 0, False
     while steps < max_steps and not done:
         chunk = policy.predict_chunk(obs, target_row)
-        for k in range(min(EXEC_STEPS, CHUNK)):
+        for k in range(min(exec_steps, CHUNK)):
             obs, reward, terminated, truncated, last_info = env.step(chunk[k])
             steps += 1
             if writer and steps % 2 == 0:
@@ -92,7 +93,8 @@ def rollout(env, policy, video_path=None, seed=None, phys=None):
     return last_info
 
 
-def main(n, ckpt, video, phys_level=0.0, tag="act", strict=False):
+def main(n, ckpt, video, phys_level=0.0, tag="act", strict=False,
+         exec_steps=EXEC_STEPS):
     env = PillTearEnv(seed=1234, strict_grip=strict)
     policy = ActPolicy(HERE / "ckpt" / ckpt)
     phys_rng = np.random.default_rng(777)   # 物理参数序列与 seed 解耦，档间可配对
@@ -107,7 +109,8 @@ def main(n, ckpt, video, phys_level=0.0, tag="act", strict=False):
         vp = None
         if video and ep < 1:   # 四视角高清视频体积大，只录代表性一条
             vp = VIDEO_DIR / f"{tag}_rollout_{ep}.mp4"
-        info = rollout(env, policy, video_path=vp, seed=10000 + ep, phys=phys)
+        info = rollout(env, policy, video_path=vp, seed=10000 + ep, phys=phys,
+                       exec_steps=exec_steps)
         seg_ok = bool(info.get("seg_in_box_b"))
         clean = seg_ok and bool(info.get("clean_tear"))
         n_seg += seg_ok
@@ -134,6 +137,8 @@ if __name__ == "__main__":
     parser.add_argument("--tag", type=str, default="act", help="视频文件名前缀")
     parser.add_argument("--strict", action="store_true",
                         help="严格物理评测：断裂需双指夹持（配严格数据训练的策略）")
+    parser.add_argument("--exec-steps", type=int, default=EXEC_STEPS,
+                        help="每次推理开环执行步数（小=更频繁重规划）")
     args = parser.parse_args()
     main(args.n, args.ckpt, args.video, phys_level=args.phys, tag=args.tag,
-         strict=args.strict)
+         strict=args.strict, exec_steps=args.exec_steps)
